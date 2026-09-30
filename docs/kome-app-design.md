@@ -1,11 +1,18 @@
 # Kome-app 設計書: 米の受取記録・予測・GitHub 自動バックアップ（PWA）
 
-- 状態: 設計のみ（コード未着手）。改訂 2（再検収 P1×3・P2×1 を受け、バックアップの系譜を作り直し）の再検収待ち
-- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]
+- 状態: 設計のみ（コード未着手）。改訂 3（改訂 2 再検収 P1×1・P2×1 を反映）の再検収待ち
+- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]／改訂 3: 2026-10-01 [claude]
 - 範囲: 初版 v1.0.0 の全体（データ基盤／集計・予測／GitHub 自動バックアップと復元／自動アップデート／カレンダー書き出し／集計グラフ）
 - 範囲外: UI の見た目（設計の合格後に Claude Design へ依頼する。本書は画面の「中身と振る舞い」だけ決める）、残量管理（消費の手入力）、複数端末・家族での共有、Web Push 通知、Swift 版
 
 ### 改訂の変更点
+
+**改訂 3**（改訂 2 の再検収。構造は妥当とされ、関所の操作表の穴 2 つを閉じた）
+
+| 指摘 | 反映先 |
+|---|---|
+| P1-1 `recordError` が `writeId` を確かめず、同じ世代の古い送信のエラーが新しい送信の `pendingPush` を消せる | 送信・照合に由来するエラーは `recordPushError(gen, writeId, …)` だけにし、今の `pendingPush.writeId` と一致するときだけ書く。`writeId` を持たないエラー操作は置かない（5 周の上限はエラーを書かずに止める）（I14・§4.2・§4.4・§9） |
+| P2-1 「今すぐ保存」がエラーを消す関所の操作が無い | 関所に `clearErrorForRetry(gen)` を追加（Web Lock 内・世代の一致）（§4.0・§4.4・§9） |
 
 **改訂 2**（再検収の指摘。2 回続けてバックアップの系譜に指摘が集まったため、継ぎ足しではなく §2.2 の「系譜」の構造と §4.4 の「系譜の関所」に作り直した）
 
@@ -77,7 +84,7 @@
 | I11 | 自動アップデートの再読み込みは、入力中（入力欄にフォーカス、または開いているフォームに未保存の変更がある）やダイアログ表示中には行わない |
 | I12 | 予測は計算に使える受取日が 2 日以上あるときだけ出す。出せないときは理由を出す（0 除算・NaN を出さない。予測日を過ぎたら「予測日を N 日過ぎています」と出す） |
 | I13 | 自分より新しい DB の版・`schemaVersion` に出会ったら「停止モード」に入り、端末のデータにも GitHub にも一切書かない |
-| I14 | 系譜（§2.2）を書き換えるのは §4.4 の関所だけ。関所は、呼び出し側が持つ世代（と、送信の結果なら `writeId`）が今の系譜と一致しないとき何も書かない（古い送信の結果が新しい保存先の系譜へ入らない） |
+| I14 | 系譜（§2.2）を書き換えるのは §4.4 の関所だけ。関所は、呼び出し側が持つ世代が今の系譜と一致しないとき、また送信・照合の結果（成功・エラーとも）なら `writeId` が今の `pendingPush.writeId` と一致しないとき、何も書かない（古い送信の結果が、新しい保存先の系譜にも、同じ保存先の新しい送信にも入らない） |
 
 ## 2. 永続する状態
 
@@ -177,7 +184,7 @@ type Lineage = {
 | `conflict` | §4.2 の「自分の写しでない」 | 止める | 衝突の解決（§4.3）・復元 |
 | `invalid` | sha 衝突でない 422、GET した内容の形式違い | 止める | `saveConfig`・衝突の解決・復元 |
 
-**送信のきっかけ**: 端末での変更の 3 秒後（連続した変更はまとめる）／起動時／画面が前面に戻ったとき／`online` イベント／`saveConfig` の後／設定画面の「今すぐ保存」。止める種類のエラーがあるときは、ユーザー操作（設定の保存・今すぐ保存・衝突の解決）以外のきっかけでは送らない。「今すぐ保存」は `errorKind` を消してから送る。
+**送信のきっかけ**: 端末での変更の 3 秒後（連続した変更はまとめる）／起動時／画面が前面に戻ったとき／`online` イベント／`saveConfig` の後／設定画面の「今すぐ保存」。止める種類のエラーがあるときは、ユーザー操作（設定の保存・今すぐ保存・衝突の解決）以外のきっかけでは送らない。「今すぐ保存」は Web Lock 内で関所 `clearErrorForRetry(generation)` を呼んで `errorKind`・`retryAfter` を消してから送る（`pendingPush` は触らない。残っていれば照合から始まる）。
 
 ### 4.1 GitHub Contents API の契約
 
@@ -204,8 +211,8 @@ type Lineage = {
    - GET が成功し、本文の SHA-256 = `pendingPush.bodySha256` → 届いていた。関所 `recordPushLanded(L.generation, writeId, GET の sha)`
    - GET が成功し、sha = L.`lastPushedSha` → 届いていなかった。関所 `clearPending(L.generation, writeId)`
    - GET が 404 で L.`lastPushedSha` が null → 届いていなかった（新規ファイルの作成が失敗）。関所 `clearPending`
-   - GET が成功したがどちらでもない、または 404 で L.`lastPushedSha` が null でない → 関所 `recordError(L.generation, 'conflict')` で `pendingPush` を消して 10 へ
-   - GET が失敗（`network`・`rate-limit`・`auth`）→ 関所 `recordError(L.generation, 種類)`。**`pendingPush` は残す**（照合できていないため）。10 へ
+   - GET が成功したがどちらでもない、または 404 で L.`lastPushedSha` が null でない → 関所 `recordPushError(L.generation, pendingPush.writeId, 'conflict', keepPending: false)` で `pendingPush` を消して 10 へ
+   - GET が失敗（`network`・`rate-limit`・`auth`）→ 関所 `recordPushError(L.generation, pendingPush.writeId, 種類, keepPending: true)`。**`pendingPush` は残す**（照合できていないため）。10 へ
    - 系譜を読み直して L とし、2 へ戻る（関所が世代違いで何も書かなかった場合も、読み直しで検出される）
 4. 1 つの読み取りトランザクションで `dataRevision`（= R）と `receipts` 全件を読む。トランザクションを閉じてから、新しい `writeId` で §2.1 の本文を作り、SHA-256 を計算する
 5. 関所 `beginPush(L.generation, { writeId, revision: R, bodySha256 })` で `pendingPush` を確定する（**PUT より前**）。世代が変わっていて書けなければ 2 へ戻る
@@ -214,15 +221,15 @@ type Lineage = {
    - 成功 → `recordPushLanded(generation, writeId, content.sha)`
    - sha 衝突の候補（409・422）→ GET する（PUT は拒否されたので、ここから先は `pendingPush` を消してよい）
      - GET 成功・本文の SHA-256 = `bodySha256` → `recordPushLanded(generation, writeId, GET の sha)`（再送が先に届いていた場合）
-     - GET 成功・422 で sha = 送った sha → `recordError(generation, 'invalid')`
-     - GET 成功・それ以外 → `recordError(generation, 'conflict')`
+     - GET 成功・422 で sha = 送った sha → `recordPushError(generation, writeId, 'invalid', keepPending: false)`
+     - GET 成功・それ以外 → `recordPushError(generation, writeId, 'conflict', keepPending: false)`
      - GET 404・送った sha が null でない → 関所 `resetRemote(generation, writeId)`（`lastPushedSha = null`、`pendingPush = null`）にし、系譜を読み直して 4 へ 1 回だけ戻る（sha を省いた新規作成になる）。2 回目も同じなら `conflict`
-     - GET 404・送った sha が null → `recordError(generation, 'invalid')`（ファイルが無いのに作成が拒否された）
-     - GET 失敗（`network`・`rate-limit`・`auth`）→ `recordError(generation, 種類)`、`pendingPush` を消す（PUT が拒否されたことは確かなため）。成功・`conflict` へは進まない
-   - `network`・`rate-limit` → `recordError(generation, 種類)`。**`pendingPush` は残す**（届いたかどうか分からない。次回の手順 3 で照合する）
-   - `auth`・`config`・一般の `invalid` → `recordError(generation, 種類)`、`pendingPush` を消す（届いていないことが確かなため）
+     - GET 404・送った sha が null → `recordPushError(generation, writeId, 'invalid', keepPending: false)`（ファイルが無いのに作成が拒否された）
+     - GET 失敗（`network`・`rate-limit`・`auth`）→ `recordPushError(generation, writeId, 種類, keepPending: false)`、`pendingPush` を消す（PUT が拒否されたことは確かなため）。成功・`conflict` へは進まない
+   - `network`・`rate-limit` → `recordPushError(generation, writeId, 種類, keepPending: true)`。**`pendingPush` は残す**（届いたかどうか分からない。次回の手順 3 で照合する）
+   - `auth`・`config`・一般の `invalid` → `recordPushError(generation, writeId, 種類, keepPending: false)`、`pendingPush` を消す（届いていないことが確かなため）
 8. 送信中に端末が変わっていれば、`lastPushedRevision = R` なので `needsPush` が残る
-9. `needsPush` が残り、エラーが無ければ 2 へ戻る（1 回の起動につき最大 5 周。超えたら `network` で止める）
+9. `needsPush` が残り、エラーが無ければ 2 へ戻る（1 回の送信につき最大 5 周。超えたらエラーを書かずに止める。`needsPush` が残るので次のきっかけで再開する。この止め方は `writeId` を持たないため、関所へ書かない）
 10. ロックを外す
 
 ### 4.3 衝突の解決（ユーザー操作）
@@ -243,7 +250,8 @@ type Lineage = {
 | `recordPushLanded(gen, writeId, sha)` | 世代と `writeId` の一致 | `lastPushedSha = sha`、`lastPushedRevision = max(現在値 ?? -1, pendingPush.revision)`、`lastPushedAt`、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.2 手順 3・7 |
 | `clearPending(gen, writeId)` | 世代と `writeId` の一致 | `pendingPush = null` | §4.2 手順 3 |
 | `resetRemote(gen, writeId)` | 世代と `writeId` の一致 | `lastPushedSha = null`、`pendingPush = null` | §4.2 手順 7 |
-| `recordError(gen, kind, keepPending, retryAfter?)` | 世代の一致 | `errorKind`、`retryAfter`、`lastErrorMessage`、`keepPending` が偽なら `pendingPush = null` | §4.2 |
+| `recordPushError(gen, writeId, kind, keepPending, retryAfter?)` | 世代の一致、かつ `pendingPush?.writeId === writeId`（照合・送信の結果に限る。`writeId` を持たないエラー操作は置かない） | `errorKind`、`retryAfter`、`lastErrorMessage`、`keepPending` が偽なら `pendingPush = null` | §4.2 |
+| `clearErrorForRetry(gen)` | Web Lock 内。世代の一致 | `errorKind = null`、`retryAfter = null`（`pendingPush`・sha・revision は触らない） | 「今すぐ保存」（§4.0） |
 | `adoptRemoteSha(gen, sha)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
 | `restore(expected, backup, source)` | Web Lock 内。世代の一致、`dataRevision` = 確認時の D0 | §6.1 手順 3 のとおり（記録の全件入れ替えを含む） | §6.1 |
 | `undoRestore(gen)` | Web Lock 内。世代の一致、`preRestoreSnapshot` がある | 記録を戻し、スナップショットを消し、`dataRevision` +1、`pendingPush = null`、`errorKind = null`、`retryAfter = null`（系譜の sha・revision はそのまま → `needsPush` になり、次の送信で GitHub も取り消し後の内容になる。取り消し前の GitHub の内容は git の履歴に残る） | 設定画面 |
@@ -357,6 +365,8 @@ type Lineage = {
 | I7-d | ネット不通で失敗 → `pendingPush` が残り、次回は照合から始まる | |
 | 照合の GET 失敗（P2-1） | 照合の GET がネット不通／429／401 → `pendingPush` が残り、成功・`conflict` にならない。sha 衝突後の GET がネット不通 → `pendingPush` は消え、成功・`conflict` にならない | |
 | I14・保存先変更の並行（P1-2） | PUT の応答待ちで止めた状態で保存先を A→B に変える → 旧 PUT の成功応答を流しても B の系譜（`lastPushedSha`・`lastPushedRevision`）は変わらず、B へ全件が送られる。トークンだけの変更では世代が変わらない | |
+| I14・同じ世代の古い送信（改訂 3 P1-1） | 同じ世代で送信 A の `pendingPush` を消した後に送信 B の `pendingPush` を確定し、A の writeId で `recordPushError`（network／auth／conflict）と `recordPushLanded` を流す → B の `pendingPush`・`errorKind`・sha・revision が変わらない | |
+| 今すぐ保存（改訂 3 P2-1） | `auth` で止まった状態で今すぐ保存 → `clearErrorForRetry` でエラーが消えて送信が走る。古い世代を渡した `clearErrorForRetry` は何も書かない | |
 | I14 の経路 | grep: `meta` の `backup` キーへの put、`secrets`・`preRestoreSnapshot` への書き込みが `src/backup/lineage.ts` だけ（全出現を許可リストと照合） | |
 | I8 | 確認後に別タブで記録を足す → 確定で置き換えず再確認へ。確認後に保存先を変える → 同上。確認後に GitHub の sha が変わる → 同上。復元トランザクションの途中で例外 → 端末は元のまま。確定後 `undoRestore` で完全に戻る。GitHub から復元した直後は「保存済み」で、次の変更の PUT が S0 を sha にして成功する | |
 | JSON 復元と残った pending（P1-3） | ネット不通で `pendingPush` が残った状態で JSON から復元 → `pendingPush` が消え、次の送信は復元後のデータを新しい `writeId` で送る。旧 pending 本文が GitHub に届いていても、復元後のデータが保存済み扱いにならない | |
