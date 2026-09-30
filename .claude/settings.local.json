@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/12yyy/Exobrain && cat Preferences/profile.md; echo ----; cat Knowledge/mistakes.md; echo ----; cat Knowledge/mistakes-開発.md; echo ----; grep -ril -e \"PWA\" -e \"自動アップデート\" -e \"github pages\" Knowledge Decisions Projects Preferences --include=*.md | grep -v _archive | head -30; ls /Users/12yyy/Cowork-Code/アプリ制作/)",
+      "Bash(git init *)"
+    ]
+  }
+}
