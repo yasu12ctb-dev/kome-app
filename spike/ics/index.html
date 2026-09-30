@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ICS試験">
+<link rel="manifest" href="manifest.json">
+<title>ICS試験</title>
+<style>
+  body { font: 17px -apple-system, system-ui, sans-serif; margin: 0; padding: calc(env(safe-area-inset-top) + 16px) 16px 16px; }
+  button { display: block; width: 100%; min-height: 48px; margin: 10px 0; font-size: 17px; }
+  #log { white-space: pre-wrap; font-size: 13px; background: #eee; padding: 8px; }
+</style>
+</head>
+<body>
+<h1>.ics 受け渡し試験</h1>
+<p id="mode"></p>
+<button id="a">A: Blob をダウンロード（a download）</button>
+<button id="b">B: navigator.share でファイル共有</button>
+<button id="c">C: data: URL へ移動</button>
+<button id="d">D: Blob URL へ移動（location）</button>
+<div id="log"></div>
+<script>
+const log = (m) => { document.getElementById('log').textContent += new Date().toLocaleTimeString() + ' ' + m + '\n'; };
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+document.getElementById('mode').textContent = 'display-mode: ' + (standalone ? 'standalone（ホーム画面版）' : 'browser（Safari）');
+const pad = (n) => String(n).padStart(2, '0');
+function ics() {
+  const d = new Date(); d.setDate(d.getDate() + 28);
+  const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const e = new Date(d); e.setDate(e.getDate() + 1);
+  const ymd2 = `${e.getFullYear()}${pad(e.getMonth() + 1)}${pad(e.getDate())}`;
+  const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//kome-app//spike//JA','CALSCALE:GREGORIAN','METHOD:PUBLISH',
+    'BEGIN:VEVENT','UID:kome-next@spike','DTSTAMP:' + now,'DTSTART;VALUE=DATE:' + ymd,'DTEND;VALUE=DATE:' + ymd2,
+    'SUMMARY:お米の購入目安','BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:お米の購入目安','TRIGGER:-P3D','END:VALARM',
+    'END:VEVENT','END:VCALENDAR',''].join('\r\n');
+}
+const blob = () => new Blob([ics()], { type: 'text/calendar;charset=utf-8' });
+document.getElementById('a').onclick = () => {
+  const u = URL.createObjectURL(blob()); const a = document.createElement('a');
+  a.href = u; a.download = 'kome-next.ics'; document.body.appendChild(a); a.click(); a.remove();
+  log('A: クリック実行'); setTimeout(() => URL.revokeObjectURL(u), 60000);
+};
+document.getElementById('b').onclick = async () => {
+  const f = new File([ics()], 'kome-next.ics', { type: 'text/calendar' });
+  const can = !!(navigator.canShare && navigator.canShare({ files: [f] }));
+  log('B: canShare(files)=' + can);
+  if (!can) return;
+  try { await navigator.share({ files: [f], title: 'お米の購入目安' }); log('B: share 完了'); }
+  catch (e) { log('B: ' + e.name + ' ' + e.message); }
+};
+document.getElementById('c').onclick = () => { log('C: 移動'); location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics()); };
+document.getElementById('d').onclick = () => { log('D: 移動'); location.href = URL.createObjectURL(blob()); };
+</script>
+</body>
+</html>

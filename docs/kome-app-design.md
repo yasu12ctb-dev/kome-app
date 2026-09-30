@@ -327,9 +327,10 @@ type Lineage = {
 - 確認済み（公式ドキュメント、2026-09-30）:
   - GitHub REST API は任意の origin からの CORS に対応し、preflight で `Authorization` と `PUT` を許可している
   - Fine-grained PAT は無期限も選べる（組織・Enterprise のポリシーで上限を課される場合がある。個人リポジトリなので対象外の見込み）。期限を付けた場合の期限切れは `auth` で知らせる
-- 実装の最初に確かめる（だめなら実装を止めて設計の再検収へ戻る）:
-  - 専用の空リポジトリで、ブラウザから GET／新規 PUT／sha 付き更新／sha 不一致が通しで動くこと（公式上は通る。環境固有の不通の確認）
-  - iOS のホーム画面版での `.ics` の渡し方（Blob のダウンロードで「カレンダーに追加」が出るか、`navigator.share` のファイル共有が要るか）
+- 成立性確認の結果（2026-10-01、`spike/`・往復ログ参照）:
+  - GitHub Contents API（`kome-data` で実施、試験ファイルは削除済み）: GET 404（空リポジトリ・ファイル無し・リポジトリ無しのいずれも 404）／sha なし PUT で新規作成（応答の `content.sha` が次の GET の `sha` と一致）／GET の `content` を base64 で戻したバイト列の SHA-256 が送った本文と一致／sha 付き PUT で更新／古い sha の PUT は **409**／sha なしで既存ファイルへの PUT は **422**（`"sha" wasn't supplied`）。§4.1・§4.2 の前提どおり
+  - CORS（`Origin` 付きの preflight を再現）: `access-control-allow-origin: *`、許可ヘッダに `Authorization`・`Content-Type`・`X-GitHub-Api-Version`、許可メソッドに `PUT`、公開ヘッダに `Retry-After`・`X-RateLimit-Remaining`・`X-RateLimit-Reset`。API の確認は `gh` の既存ログイン（CLI）で行い、ブラウザ上で PAT を使った通しの確認は、ユーザーが PAT を発行した後の最初の結合確認で行う
+  - `.ics`（iOS シミュレータ iPhone 17 Pro・iOS 26.5、ホーム画面に追加した版で `display-mode: standalone` を確認）: **Blob を `<a download>` でダウンロードさせる方式で、カレンダーの追加画面が直接開き、終日の予定と「3 日前」の通知が読み込まれた**。この方式を採用する（実機は未確認。初回の実機利用で確かめる）
 - GET の 404 はリポジトリが見えない場合とファイルが無い場合を区別できない（§4.1）。「ファイルが無い」と読むのは §4.2 の限られた箇所だけで、続く PUT の 404 で `config` として表面化する
 - 予測は「最近の購入ペースが続く」前提の単純な計算。長期の不在・来客などは反映しない
 - 未知のフィールドはバックアップで保持しない（形式を書くのがこのアプリだけのため）
