@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createChangeChannel, type ChangeChannel } from '../app/channel';
 import { attachPushTriggers, createPushScheduler, type PushScheduler } from '../app/scheduler';
-import { createReloadGate, isBusy } from '../app/autoUpdate';
+import type { ReloadCoordinator } from '../app/reload';
 import type { LineageGate } from '../backup/lineage';
 import { createBackupService, type BackupService, type ConfirmResult, type PreviewResult, type RestorePreview } from '../backup/service';
 import { toLocalYmd } from '../data/date';
@@ -41,7 +41,7 @@ export interface KomeActions {
   exportFile(): Promise<{ bytes: Uint8Array<ArrayBuffer>; fileName: string }>;
 }
 
-export function useKome(): { state: KomeState; actions: KomeActions } {
+export function useKome(coordinator: ReloadCoordinator): { state: KomeState; actions: KomeActions } {
   const [state, setState] = useState<KomeState>({ kind: 'loading' });
   const repoRef = useRef<Repo | null>(null);
   const gateRef = useRef<LineageGate | null>(null);
@@ -69,7 +69,6 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
   useEffect(() => {
     let disposed = false;
     let detach: (() => void) | null = null;
-    const reloadGate = createReloadGate({ busy: () => isBusy(document), reload: () => window.location.reload() });
     void (async () => {
       // §6 手順 4: 保存領域を消されにくくする
       void navigator.storage?.persist?.().catch(() => false);
@@ -80,11 +79,11 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
         },
         onVersionChange: () => {
           // 別のタブが新しい版で DB を上げた。DB は閉じた（db.ts）。画面は残して入力を守り、
-          // 入力を終えた時点で読み込み直す（I11・§3「DB の版上げ」）
+          // 送信のきっかけと読み直しを止め、窓口に予約する（§6.2 の db-upgrade）
           upgradingRef.current = true;
           schedulerRef.current?.dispose();
           setState((prev) => (prev.kind === 'ready' ? { ...prev, upgrading: true } : { kind: 'stopped', reason: 'other-tab-upgrade' }));
-          reloadGate.request();
+          coordinator.request('db-upgrade');
         },
       });
       if (disposed) return;
@@ -109,7 +108,6 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
         if (document.visibilityState === 'visible') void refresh();
       };
       document.addEventListener('visibilitychange', onVisible);
-      document.addEventListener('focusout', () => setTimeout(() => reloadGate.tryReload(), 0));
       detach = () => {
         detachTriggers();
         document.removeEventListener('visibilitychange', onVisible);
@@ -125,7 +123,7 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
       channelRef.current?.close();
       repoRef.current?.close();
     };
-  }, [refresh]);
+  }, [refresh, coordinator]);
 
   const service = () => {
     const s = serviceRef.current;

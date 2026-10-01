@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isBusy, setupAutoUpdate } from '../src/app/autoUpdate';
+import { createReloadCoordinator } from '../src/app/reload';
 import type { Lineage } from '../src/data/types';
 import { AddEdit } from '../src/ui/AddEdit';
 import { App } from '../src/ui/App';
@@ -80,9 +81,10 @@ function fakeActions(over: Partial<KomeActions> = {}): KomeActions {
   };
 }
 
-describe('I11: プラグインの再読み込み要求も同じ関門を通る（U3 実装検収 P1-1）', () => {
-  it('vite-plugin-pwa の約束（onNeedReload があればそれを呼び、無ければ直接 reload）のもとで、入力中は再読み込みしない', () => {
+describe('§6.2 プラグインの再読み込み要求も窓口を通る（U3 実装検収 P1-1）', () => {
+  it('vite-plugin-pwa の約束（onNeedReload があればそれを呼び、無ければ直接 reload）のもとで、入力中は読み込み直さず、入力を終えたら 1 回だけ', async () => {
     const reload = vi.fn();
+    const coordinator = createReloadCoordinator({ win: window, reload });
     let options: { onNeedReload?: () => void } = {};
     const win = {
       document,
@@ -91,7 +93,7 @@ describe('I11: プラグインの再読み込み要求も同じ関門を通る�
       setInterval: () => 0,
       addEventListener: () => {},
     } as unknown as Window;
-    const gate = setupAutoUpdate({ win, registerSW: (o) => (options = o) });
+    setupAutoUpdate({ win, coordinator, registerSW: (o) => (options = o) });
     const input = document.createElement('input');
     document.body.append(input);
     input.focus();
@@ -100,7 +102,7 @@ describe('I11: プラグインの再読み込み要求も同じ関門を通る�
     else win.location.reload();
     expect(reload).not.toHaveBeenCalled();
     input.blur();
-    gate!.tryReload();
+    await new Promise((r) => setTimeout(r, 5));
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });
@@ -119,9 +121,11 @@ describe('I11: 設定の未保存の入力（U3 実装検収 P2-1）', () => {
     onConflict: () => {},
   });
 
-  it('入力したらフォーカスを外しても busy。保存に失敗しても入力は残り busy のまま。保存できたら busy でない', async () => {
+  it('sw-update の流れ: 設定を入力中に新しい版 → 読み込み直さない → 保存に失敗しても入力が残り待つ → 保存できたら 1 回だけ読み込み直す', async () => {
     let result = false;
     const saveConfig = vi.fn(async () => result);
+    const reload = vi.fn();
+    const coordinator = createReloadCoordinator({ win: window, reload });
     await render(<Settings {...props(fakeActions({ saveConfig }))} />);
     const owner = host.querySelector<HTMLInputElement>('#owner')!;
     const token = host.querySelector<HTMLInputElement>('#token')!;
@@ -130,17 +134,23 @@ describe('I11: 設定の未保存の入力（U3 実装検収 P2-1）', () => {
     typeInto(token, 'github_pat_x');
     act(() => owner.blur());
     expect(isBusy(document)).toBe(true);
+    coordinator.request('sw-update');
+    expect(reload).not.toHaveBeenCalled();
 
     await act(async () => host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
     expect(saveConfig).toHaveBeenCalledTimes(1);
     expect(host.querySelector<HTMLInputElement>('#owner')!.value).toBe('someone');
     expect(host.querySelector<HTMLInputElement>('#token')!.value).toBe('github_pat_x');
     expect(isBusy(document)).toBe(true);
+    await act(async () => new Promise((r) => setTimeout(r, 10)));
+    expect(reload).not.toHaveBeenCalled();
 
     result = true;
     await act(async () => host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    await act(async () => new Promise((r) => setTimeout(r, 10)));
     expect(host.querySelector('#token')).toBeNull();
     expect(isBusy(document)).toBe(false);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -161,11 +171,11 @@ describe('I1: 保存に失敗したら入力を残す（実際の追加画面）
   });
 });
 
-describe('別のタブが DB の版を上げたとき、入力中のフォームを残す（U3 実装検収 P2-2）', () => {
-  it('追加画面の入力が消えず、案内が出て、再読み込みは入力を終えるまで待つ', async () => {
+describe('§6.2 db-upgrade の流れ（U3 実装検収 P2-2・再検収 P2-1）', () => {
+  it('追加画面で入力中に別のタブが版を上げる → 入力が残り案内が出る → 保存は失敗して入力が残る → 「やめる」でホームへ → 1 回だけ読み込み直す', async () => {
     const reload = vi.fn();
-    Object.defineProperty(window, 'location', { value: { ...window.location, reload, hash: '' }, configurable: true, writable: true });
-    await render(<App />);
+    const coordinator = createReloadCoordinator({ win: window, reload });
+    await render(<App coordinator={coordinator} />);
     await until(() => host.textContent?.includes('最初の一袋') ?? false);
     window.location.hash = '#add';
     await act(async () => window.dispatchEvent(new HashChangeEvent('hashchange')));
@@ -175,8 +185,23 @@ describe('別のタブが DB の版を上げたとき、入力中のフォーム
     const other = openDB('kome', 2, { upgrade: () => {} });
     await until(() => host.textContent?.includes('新しい版のアプリが別の画面で開かれました') ?? false);
     expect(host.querySelector<HTMLInputElement>('#kg')!.value).toBe('15');
+    expect(coordinator.state()).toBe('pending');
     expect(isBusy(document)).toBe(true);
+
+    // 保存は失敗し、入力は残る（I1）
+    await act(async () => host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    await until(() => host.querySelector('[role="alert"]') !== null);
+    expect(host.querySelector<HTMLInputElement>('#kg')!.value).toBe('15');
     expect(reload).not.toHaveBeenCalled();
+
+    // 「やめる」でホームへ。busy が解けて 1 回だけ読み込み直す
+    await act(async () => {
+      [...host.querySelectorAll('button')].find((b) => b.textContent === 'やめる')!.click();
+    });
+    await act(async () => window.dispatchEvent(new HashChangeEvent('hashchange')));
+    await until(() => reload.mock.calls.length > 0);
+    await act(async () => new Promise((r) => setTimeout(r, 20)));
+    expect(reload).toHaveBeenCalledTimes(1);
     (await other).close();
   });
 });

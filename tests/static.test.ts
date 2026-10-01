@@ -43,6 +43,16 @@ describe('§3 データを変えうる経路', () => {
     expect(filesMatching(/['"](secrets|preRestoreSnapshot)['"]/)).toEqual(['src/backup/lineage.ts', 'src/data/db.ts']);
   });
 
+  it('読み込み直し（location.reload）を呼ぶのは窓口 src/app/reload.ts と停止画面のボタン（App.tsx）だけ（§6.2）', () => {
+    expect(filesMatching(/location\.reload\s*\(/)).toEqual(['src/app/reload.ts', 'src/ui/App.tsx']);
+  });
+
+  it('予約の 3 経路（controllerchange・onNeedReload・DB の版上げ）はすべて窓口へ予約する（§6.2）', () => {
+    const auto = readFileSync(join(ROOT, 'src/app/autoUpdate.ts'), 'utf8');
+    expect(auto.match(/coordinator\.request\('sw-update'\)/g)).toHaveLength(2);
+    expect(readFileSync(join(ROOT, 'src/ui/useKome.ts'), 'utf8')).toContain("coordinator.request('db-upgrade')");
+  });
+
   it('外部への通信（fetch）と api.github.com は src/backup/github.ts だけ', () => {
     expect(filesMatching(/\bfetch\s*\(/)).toEqual(['src/backup/github.ts']);
     expect(filesMatching(/api\.github\.com/)).toEqual(['src/backup/github.ts']);

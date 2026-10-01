@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createReloadGate, isBusy } from '../src/app/autoUpdate';
+import { isBusy } from '../src/app/autoUpdate';
+import { createReloadCoordinator, RECHECK_INTERVAL_MS } from '../src/app/reload';
 import { createChangeChannel } from '../src/app/channel';
 import { buildIcs } from '../src/app/ics';
 import { attachPushTriggers, createPushScheduler, PUSH_DEBOUNCE_MS } from '../src/app/scheduler';
@@ -98,23 +99,98 @@ describe('I11: 自動アップデートの再読み込みを待つ条件', () =>
     expect(isBusy(document)).toBe(false);
   });
 
-  it('busy の間は再読み込みを予約だけし、解除されたら 1 回だけ再読み込みする', () => {
+});
+
+describe('§6.2 読み込み直しの窓口', () => {
+  function setup() {
     let busy = true;
     const reload = vi.fn();
-    const gate = createReloadGate({ busy: () => busy, reload });
-    gate.request();
-    gate.tryReload();
+    const c = createReloadCoordinator({ win: window, reload, busy: () => busy });
+    return { c, reload, unbusy: () => (busy = false) };
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  it('予約が無ければ、どのきっかけでも読み込み直さない（見張りも始めない）', async () => {
+    const reload = vi.fn();
+    const c = createReloadCoordinator({ win: window, reload, busy: () => false });
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    document.body.append(document.createElement('div'));
+    c.check();
+    await tick();
     expect(reload).not.toHaveBeenCalled();
-    busy = false;
-    gate.tryReload();
-    gate.tryReload();
+    expect(c.state()).toBe('idle');
+  });
+
+  it('busy でなければ予約した直後に 1 回だけ読み込み直す', () => {
+    const reload = vi.fn();
+    const c = createReloadCoordinator({ win: window, reload, busy: () => false });
+    c.request('sw-update');
+    c.request('db-upgrade');
+    c.check();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(c.state()).toBe('reloading');
+  });
+
+  it('busy の間は pending のまま、理由は集合で持つ', () => {
+    const { c, reload } = setup();
+    c.request('sw-update');
+    c.request('db-upgrade');
+    c.request('sw-update');
+    expect(reload).not.toHaveBeenCalled();
+    expect(c.state()).toBe('pending');
+    expect([...c.reasons()].sort()).toEqual(['db-upgrade', 'sw-update']);
+  });
+
+  const triggers: [string, () => void | Promise<void>][] = [
+    ['focusout（次のタスクで）', async () => {
+      document.dispatchEvent(new FocusEvent('focusout'));
+      await tick();
+    }],
+    ['文書の変化（未保存の印が外れる）', async () => {
+      const m = document.createElement('main');
+      m.dataset.dirty = 'true';
+      document.body.append(m);
+      await tick();
+    }],
+    ['hashchange（画面の移動）', () => {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }],
+    ['前面に戻った', () => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }],
+  ];
+  it.each(triggers)('きっかけ: %s で、busy が解けていれば 1 回だけ読み込み直す', async (_label, fire) => {
+    const { c, reload, unbusy } = setup();
+    c.request('db-upgrade');
+    unbusy();
+    expect(reload).not.toHaveBeenCalled();
+    await fire();
+    expect(reload).toHaveBeenCalledTimes(1);
+    await fire();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('予約が無ければ再読み込みしない', () => {
-    const reload = vi.fn();
-    createReloadGate({ busy: () => false, reload }).tryReload();
+  it('きっかけ: 5 秒ごとの定期判定（取りこぼしの保険）', () => {
+    vi.useFakeTimers();
+    const { c, reload, unbusy } = setup();
+    c.request('sw-update');
+    unbusy();
+    vi.advanceTimersByTime(RECHECK_INTERVAL_MS - 1);
     expect(reload).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(RECHECK_INTERVAL_MS * 3);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('読み込み直しに入った後の予約は何もしない', () => {
+    const reload = vi.fn();
+    const c = createReloadCoordinator({ win: window, reload, busy: () => false });
+    c.request('sw-update');
+    c.request('db-upgrade');
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect([...c.reasons()]).toEqual(['sw-update']);
   });
 });
 

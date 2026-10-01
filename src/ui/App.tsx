@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { requestAppUpdate } from '../app/autoUpdate';
+import { appReloadCoordinator, type ReloadCoordinator } from '../app/reload';
 import type { RestorePreview } from '../backup/service';
 import { AddEdit } from './AddEdit';
 import { ConflictDialog, RestoreDialog } from './Dialogs';
@@ -32,8 +33,9 @@ function isStandalone(): boolean {
   return window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 }
 
-export function App() {
-  const { state, actions } = useKome();
+export function App(props: { coordinator?: ReloadCoordinator } = {}) {
+  const [coordinator] = useState(() => props.coordinator ?? appReloadCoordinator());
+  const { state, actions } = useKome(coordinator);
   const hash = useHash();
   const [preview, setPreview] = useState<RestorePreview | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -55,6 +57,7 @@ export function App() {
             className="primary"
             onClick={async () => {
               await requestAppUpdate(window);
+              // 停止画面には入力を持つ画面が無く、利用者の明示の操作なので窓口を通さない（§6.2）
               window.location.reload();
             }}
           >

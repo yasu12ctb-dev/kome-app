@@ -1,44 +1,13 @@
-// 自動アップデート（設計書 §6 手順 5・I11。Libroli の方式: Vault Knowledge/pwa-auto-update-reload.md）。
-// 新しい版が来たら再読み込みを予約し、入力中・未保存のフォーム・ダイアログ表示中は待つ。
+// 自動アップデート（設計書 §6 手順 5・§6.2）。新しい版の検知は 2 経路（Service Worker の controllerchange と
+// vite-plugin-pwa の onNeedReload）あり、どちらも読み込み直しの窓口へ予約するだけにする。
 
-/** 再読み込みしてはいけない状態か */
-export function isBusy(doc: Document): boolean {
-  const el = doc.activeElement as HTMLElement | null;
-  if (el) {
-    const tag = el.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return true;
-  }
-  if (doc.querySelector('[data-dirty="true"]')) return true;
-  if (doc.querySelector('[role="dialog"]')) return true;
-  return false;
-}
+import type { ReloadCoordinator } from './reload';
 
-export interface ReloadGate {
-  /** 新しい版が有効になった。可能なら再読み込み、無理なら予約 */
-  request(): void;
-  /** 予約があり、今なら再読み込みしてよければする */
-  tryReload(): void;
-}
-
-export function createReloadGate(deps: { busy: () => boolean; reload: () => void }): ReloadGate {
-  let pending = false;
-  let reloading = false;
-  const tryReload = () => {
-    if (!pending || reloading || deps.busy()) return;
-    reloading = true;
-    deps.reload();
-  };
-  return {
-    request() {
-      pending = true;
-      tryReload();
-    },
-    tryReload,
-  };
-}
+export { isBusy } from './reload';
 
 export interface AutoUpdateDeps {
   win: Window;
+  coordinator: ReloadCoordinator;
   /** vite-plugin-pwa の registerSW */
   registerSW: (options: {
     immediate: boolean;
@@ -48,37 +17,32 @@ export interface AutoUpdateDeps {
   checkIntervalMs?: number;
 }
 
-export function setupAutoUpdate(deps: AutoUpdateDeps): ReloadGate | null {
-  const { win } = deps;
+export function setupAutoUpdate(deps: AutoUpdateDeps): void {
+  const { win, coordinator } = deps;
   const sw = win.navigator.serviceWorker;
-  if (!sw) return null;
-  // 初回のインストールで制御が付いたときは再読み込みしない
+  if (!sw) return;
+  // 初回のインストールで制御が付いたときは読み込み直さない
   const hadController = !!sw.controller;
-  const gate = createReloadGate({ busy: () => isBusy(win.document), reload: () => win.location.reload() });
   sw.addEventListener('controllerchange', () => {
-    if (hadController) gate.request();
+    if (hadController) coordinator.request('sw-update');
   });
-  win.document.addEventListener('focusout', () => setTimeout(() => gate.tryReload(), 0));
-  win.setInterval(() => gate.tryReload(), 5_000);
   deps.registerSW({
     immediate: true,
-    // vite-plugin-pwa（autoUpdate）は onNeedReload が無いと、新しい版が有効になった時点で
-    // window.location.reload() を直接呼ぶ（入力中でも）。必ず同じ関門に通す（I11）
-    onNeedReload: () => gate.request(),
+    // vite-plugin-pwa（autoUpdate）は onNeedReload が無いと内部で直接ページを読み込み直す（location.reload）。
+    // 必ず窓口へ予約させ、内部の経路を使わせない（§6.2）
+    onNeedReload: () => coordinator.request('sw-update'),
     onRegisteredSW(_url, reg) {
       if (!reg) return;
-      const check = () => {
+      const checkForUpdate = () => {
         reg.update().catch(() => {});
-        gate.tryReload();
       };
-      win.setInterval(check, deps.checkIntervalMs ?? 60 * 60 * 1000);
+      win.setInterval(checkForUpdate, deps.checkIntervalMs ?? 60 * 60 * 1000);
       win.document.addEventListener('visibilitychange', () => {
-        if (win.document.visibilityState === 'visible') check();
+        if (win.document.visibilityState === 'visible') checkForUpdate();
       });
-      win.addEventListener('focus', check);
+      win.addEventListener('focus', checkForUpdate);
     },
   });
-  return gate;
 }
 
 /** 停止モード（I13）から新しい版を取りに行く */
