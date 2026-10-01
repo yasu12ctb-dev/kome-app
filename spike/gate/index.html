@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 本番と同じ CSP（設計書 §8）。外部への通信は api.github.com だけ -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.github.com">
+<title>GitHub 通し確認</title>
+<link rel="stylesheet" href="./gate.css">
+</head>
+<body>
+<main>
+<h1>GitHub 通し確認（U2 の関門）</h1>
+<p>鍵（トークン）はこのページのメモリにだけ置き、保存・表示・送信先の記録はしません。閉じれば消えます。</p>
+<form id="form">
+<label>保存先 <input id="repo" value="yasu12ctb-dev/kome-data" autocomplete="off"></label>
+<label>GitHub の鍵（トークン） <input id="token" type="password" autocomplete="off" required></label>
+<button type="submit">確認を始める</button>
+</form>
+<ol id="log"></ol>
+<p id="result"></p>
+</main>
+<script type="module" src="./gate.ts"></script>
+</body>
+</html>
