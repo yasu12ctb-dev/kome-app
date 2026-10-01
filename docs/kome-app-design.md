@@ -349,12 +349,12 @@ type Lineage = {
 
 ## 9. 不変条件と試験の対応
 
-試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。
+試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。U1 実装検収（2026-10-01、P1×2・P2×1）の修正後: Vitest 60/60、追加の mutation N1〜N4 を検出（下表）。N5（時差の範囲チェックを外す）は検出されず、`Date.parse` が既に拒むため効いていない重複と判断してコードから外した。
 
 | 不変条件 | 試験（予定） | 壊して確かめたこと（mutation） |
 |---|---|---|
-| I1 | U1（`tests/repo.test.ts`「I1」）: DB を閉じて書けない状態で追加 → `failed` を返し、記録も `dataRevision` も残らない。入力値を画面に残すのは U3 の画面の試験で確かめる | M5 追加の失敗を成功として返す → I1・I3 の 2 件が落ちた |
-| I2 | U1（`tests/validate.test.ts`・`tests/repo.test.ts`「I2」）: 不正な値 17 通り＋オブジェクトでない値を `validateReceipt` が拒否。追加・編集の経路でも `invalid` を返し DB が変わらない。復元の経路は U2 で足す | M2 未来日の検査を外す → 3 件、M3 小数 1 桁の検査を外す → 2 件、M4 `updatedAt < createdAt` の検査を外す → 1 件が落ちた |
+| I1 | U1（`tests/repo.test.ts`「I1」）: DB を閉じて書けない状態で追加 → `failed` を返し、記録も `dataRevision` も残らない。入力値を画面に残すのは U3 の画面の試験で確かめる。確定した後の通知（`onChange`）が例外を出しても、追加・編集・削除は成功を返し、通知の失敗は `console.error` に分ける | M5 追加の失敗を成功として返す → I1・I3 の 2 件が落ちた。N1 通知の失敗を投げ直す → 1 件が落ちた |
+| I2 | U1（`tests/validate.test.ts`・`tests/repo.test.ts`「I2」）: 不正な値 17 通り＋オブジェクトでない値を `validateReceipt` が拒否。追加・編集の経路でも `invalid` を返し DB が変わらない。復元の経路は U2 で足す。0.1 kg 刻みで 10 倍した整数が 1 以上であること（`1e-11` など 0 に丸められる値を拒否）、日時は日付の実在（2/30・平年の 2/29・13 月）と時（24 時）を自前で確かめる | M2 未来日の検査を外す → 3 件、M3 小数 1 桁の検査を外す → 2 件、M4 `updatedAt < createdAt` の検査を外す → 1 件が落ちた。N2 0 に丸められる量を通す → 2 件、N3 日付の実在を確かめない → 2 件、N4 時の範囲を確かめない → 1 件が落ちた |
 | I3 | U1（`tests/repo.test.ts`「I3」）: `dataRevision` を上げた後で記録の追加を失敗させる（ID の衝突）→ 両方とも元のまま。無い記録の編集・削除は `not-found` で `dataRevision` 不変。「保存待ち」の表示は U2（`needsPush`）で足す | M1 `dataRevision` を別のトランザクションで上げる → I3 を含む 7 件が落ちた |
 | I4 | U1（`tests/repo.test.ts`「I4」）: 書き込み後も `meta.app` は 3 項目・記録は 7 項目だけ（累計・予測を保存していない） | 保存を足すと形の照合で落ちる（この形の試験自体の mutation は行っていない） |
 | I5 | 送信する本文が全件を含み、`validateBackup` を通る。0 件でも `receipts: []` の写しを送る | |
@@ -374,7 +374,7 @@ type Lineage = {
 | I9 | `schemaVersion: 2`、`format` 違い、`receipts` が配列でない、`revision` が負・小数、`deviceId`・`writeId` が UUID でない、`exportedAt` が不正、1 件だけ不正な記録、`id` の重複の各バックアップで 1 件も適用されない | |
 | I10 | 書き出し JSON・送信本文・エラー文言にトークン文字列が含まれない。`fetch` の宛先が `api.github.com` だけ | |
 | I11 | 入力欄にフォーカス中・フォームが未保存・ダイアログ表示中は再読み込みしない。解除後に再読み込みする | |
-| I12 | U1（`tests/stats.test.ts`）: 0 件・1 件・同日 2 件は予測しない（残り回数つき）、サンプル 8 件で 10/29・あと 28 日・約 39 日おき、境界（8 日＝ahead／7 日＝soon／当日＝today／−3＝overdue）、直近 7 日分だけ使う、kg を 0.1 刻みの整数で足す。日付ごとに合算するので「受取日 2 日以上」なら span は必ず 1 以上（span 0 の分岐は持たない） | M6 受取日 1 日でも予測 → 1 件、M7 窓を広げる → 2 件、M8 kg を小数のまま足す → 1 件、M12 7 日の境界をずらす → 1 件が落ちた |
+| I12 | U1（`tests/stats.test.ts`）: 0 件・1 件・同日 2 件は予測しない（残り回数つき）、サンプル 8 件で 10/29・あと 28 日・約 39 日おき、境界（8 日＝ahead／7 日＝soon／当日＝today／−3＝overdue）、直近 7 日分だけ使う、kg を 0.1 刻みの整数で足す。日付ごとに合算するので「受取日 2 日以上」なら span は必ず 1 以上（span 0 の分岐は持たない）。検証を通った最小の量（0.1 kg）を含む記録でも予測が例外を出さない | M6 受取日 1 日でも予測 → 1 件、M7 窓を広げる → 2 件、M8 kg を小数のまま足す → 1 件、M12 7 日の境界をずらす → 1 件が落ちた |
 | I13 | U1（`tests/repo.test.ts`「I13」）: 版 2 の DB を版 1 で開く → `newer-db-version`、DB の版・store・中身が変わらない。`schemaVersion: 2` → `newer-schema`、`meta.app` 不変・系譜も作らない | M9 `VersionError` を捕まえない → 1 件、M10 `schemaVersion` を確かめない → 1 件が落ちた |
 | §4.1 の契約 | 送るヘッダ・`ref`・PUT の本文の形を固定。応答の `content.sha` を記録し `commit.sha` を記録しない。403（rate limit ヘッダあり／なし）・429・404・一般の 422・sha 不一致の 422・409 の各分類 | |
 | §3 の経路 | U1（`tests/static.test.ts`）: IndexedDB を開くのは `db.ts` だけ、`meta.backup` の put は `lineage.ts` だけ、`meta.app` の put は `db.ts`・`repo.ts` だけ、記録の store は `repo.ts` だけ、`fetch` は無い（全出現を許可リストと照合）。検索式は型引数つき（`openDB<…>(`）・入れ子の括弧つきの呼び出しも拾う形にした（初版の式はこの 2 つを見落とし、試験が赤になって気づいた）。`api.github.com` の照合は U2 で足す | M11 別ファイルから `indexedDB.open` → 1 件が落ちた |
