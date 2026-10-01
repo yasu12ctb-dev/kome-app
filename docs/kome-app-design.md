@@ -349,7 +349,7 @@ type Lineage = {
 
 ## 9. 不変条件と試験の対応
 
-試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。U1 実装検収（2026-10-01、P1×2・P2×1）の修正後: Vitest 60/60、追加の mutation N1〜N4 を検出（下表）。N5（時差の範囲チェックを外す）は検出されず、`Date.parse` が既に拒むため効いていない重複と判断してコードから外した。
+試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。U1 実装検収（2026-10-01、P1×2・P2×1）の修正後: Vitest 60/60、追加の mutation N1〜N4 を検出（下表）。N5（時差の範囲チェックを外す）は検出されず、`Date.parse` が既に拒むため効いていない重複と判断してコードから外した。U2 の結果: 実装 `60598e9`・試験追加 `510a265`、`tsc --noEmit` 指摘なし、Vitest 110/110（backup 35・format 15・repo 14・static 6・stats 11・validate 29）、mutation V1〜V20 を検出（V5 は初回見逃し → 試験を追加して検出。V13 周回の上限を広げる → 1 件が落ちた）。試験用の GitHub は `tests/fakeGitHub.ts`（sha の照合・409／422・PUT 確定後の応答喪失・barrier を再現）。
 
 | 不変条件 | 試験（予定） | 壊して確かめたこと（mutation） |
 |---|---|---|
@@ -357,24 +357,24 @@ type Lineage = {
 | I2 | U1（`tests/validate.test.ts`・`tests/repo.test.ts`「I2」）: 不正な値 17 通り＋オブジェクトでない値を `validateReceipt` が拒否。追加・編集の経路でも `invalid` を返し DB が変わらない。復元の経路は U2 で足す。0.1 kg 刻みで 10 倍した整数が 1 以上であること（`1e-11` など 0 に丸められる値を拒否）、日時は日付の実在（2/30・平年の 2/29・13 月）と時（24 時）を自前で確かめる | M2 未来日の検査を外す → 3 件、M3 小数 1 桁の検査を外す → 2 件、M4 `updatedAt < createdAt` の検査を外す → 1 件が落ちた。N2 0 に丸められる量を通す → 2 件、N3 日付の実在を確かめない → 2 件、N4 時の範囲を確かめない → 1 件が落ちた |
 | I3 | U1（`tests/repo.test.ts`「I3」）: `dataRevision` を上げた後で記録の追加を失敗させる（ID の衝突）→ 両方とも元のまま。無い記録の編集・削除は `not-found` で `dataRevision` 不変。「保存待ち」の表示は U2（`needsPush`）で足す | M1 `dataRevision` を別のトランザクションで上げる → I3 を含む 7 件が落ちた |
 | I4 | U1（`tests/repo.test.ts`「I4」）: 書き込み後も `meta.app` は 3 項目・記録は 7 項目だけ（累計・予測を保存していない） | 保存を足すと形の照合で落ちる（この形の試験自体の mutation は行っていない） |
-| I5 | 送信する本文が全件を含み、`validateBackup` を通る。0 件でも `receipts: []` の写しを送る | |
-| I6 | 送信中（PUT の応答待ちで止める）に記録を足すと、送信後に `needsPush` が残って送り直す。同じ世代で `lastPushedRevision` は減らない | |
-| 初回送信 | (a) 記録 0 件・`dataRevision` 0 で空の新しい保存先を設定 → 空の写しが 1 回送られ「保存済み」になる。(b) 既にファイルがある保存先を設定 → PUT 拒否 → `conflict`、既存ファイルは変わらず、復元の案内が出る | |
-| I7-a | GitHub 上が手編集された JSON（`deviceId`・`revision` は端末と同じ、本文は違う）のとき、PUT を送らず `conflict` になる | |
-| I7-b | `pendingPush` 確定後・PUT 前で落とす → 次回の照合で届いていないと判定して送り直す（コミットは 1 つ） | |
-| I7-c | PUT 確定後・応答前で落とす → 次回の照合で自分の写しと判定し、GET の sha を記録する（重複コミットを作らない） | |
-| I7-d | ネット不通で失敗 → `pendingPush` が残り、次回は照合から始まる | |
-| 照合の GET 失敗（P2-1） | 照合の GET がネット不通／429／401 → `pendingPush` が残り、成功・`conflict` にならない。sha 衝突後の GET がネット不通 → `pendingPush` は消え、成功・`conflict` にならない | |
-| I14・保存先変更の並行（P1-2） | PUT の応答待ちで止めた状態で保存先を A→B に変える → 旧 PUT の成功応答を流しても B の系譜（`lastPushedSha`・`lastPushedRevision`）は変わらず、B へ全件が送られる。トークンだけの変更では世代が変わらない | |
-| I14・同じ世代の古い送信（改訂 3 P1-1） | 同じ世代で送信 A の `pendingPush` を消した後に送信 B の `pendingPush` を確定し、A の writeId で `recordPushError`（network／auth／conflict）と `recordPushLanded` を流す → B の `pendingPush`・`errorKind`・sha・revision が変わらない | |
-| 今すぐ保存（改訂 3 P2-1） | `auth` で止まった状態で今すぐ保存 → `clearErrorForRetry` でエラーが消えて送信が走る。古い世代を渡した `clearErrorForRetry` は何も書かない | |
-| I14 の経路 | grep: `meta` の `backup` キーへの put、`secrets`・`preRestoreSnapshot` への書き込みが `src/backup/lineage.ts` だけ（全出現を許可リストと照合） | |
-| I8 | 確認後に別タブで記録を足す → 確定で置き換えず再確認へ。確認後に保存先を変える → 同上。確認後に GitHub の sha が変わる → 同上。復元トランザクションの途中で例外 → 端末は元のまま。確定後 `undoRestore` で完全に戻る。GitHub から復元した直後は「保存済み」で、次の変更の PUT が S0 を sha にして成功する | |
-| JSON 復元と残った pending（P1-3） | ネット不通で `pendingPush` が残った状態で JSON から復元 → `pendingPush` が消え、次の送信は復元後のデータを新しい `writeId` で送る。旧 pending 本文が GitHub に届いていても、復元後のデータが保存済み扱いにならない | |
-| I9 | `schemaVersion: 2`、`format` 違い、`receipts` が配列でない、`revision` が負・小数、`deviceId`・`writeId` が UUID でない、`exportedAt` が不正、1 件だけ不正な記録、`id` の重複の各バックアップで 1 件も適用されない | |
-| I10 | 書き出し JSON・送信本文・エラー文言にトークン文字列が含まれない。`fetch` の宛先が `api.github.com` だけ | |
+| I5 | U2: 送信する本文が全件を含み、`validateBackup` を通る。0 件でも `receipts: []` の写しを送る | mutation は個別に行っていない（本文の形は §4.1 の契約・I9 の試験と共通） |
+| I6 | U2: 送信中（PUT の応答待ちで止める）に記録を足すと、送信後に `needsPush` が残って送り直す。同じ世代で `lastPushedRevision` は減らない | V20 PUT の前に pendingPush を確定しない → 24 件、V11 commit.sha を記録 → 10 件が落ちた（I6 を含む） |
+| 初回送信 | U2: (a) 記録 0 件・`dataRevision` 0 で空の新しい保存先を設定 → 空の写しが 1 回送られ「保存済み」になる。(b) 既にファイルがある保存先を設定 → PUT 拒否 → `conflict`、既存ファイルは変わらず、復元の案内が出る | V9 needsPush で未送信（null）を見ない → 16 件、V12 conflict を止める種類にしない → 1 件が落ちた |
+| I7-a | U2: GitHub 上が手編集された JSON（`deviceId`・`revision` は端末と同じ、本文は違う）のとき、PUT を送らず `conflict` になる | V3 衝突後の GET で本文ハッシュを見ない → 5 件が落ちた |
+| I7-b | U2: `pendingPush` 確定後・PUT 前で落とす → 次回の照合で届いていないと判定して送り直す（コミットは 1 つ） | V2 照合で本文ハッシュを見ない → 1 件が落ちた |
+| I7-c | U2: PUT 確定後・応答前で落とす → 次回の照合で自分の写しと判定し、GET の sha を記録する（重複コミットを作らない） | V4 通信失敗で pendingPush を消す → 6 件が落ちた（I7-c・I7-d を含む） |
+| I7-d | U2: ネット不通で失敗 → `pendingPush` が残り、次回は照合から始まる | V4（同上） |
+| 照合の GET 失敗（P2-1） | U2: 照合の GET がネット不通／429／401 → `pendingPush` が残り、成功・`conflict` にならない。sha 衝突後の GET がネット不通 → `pendingPush` は消え、成功・`conflict` にならない | V17 衝突後の GET 失敗で pendingPush を残す → 1 件、V18 照合 GET 失敗で pendingPush を消す → 1 件が落ちた |
+| I14・保存先変更の並行（P1-2） | U2: PUT の応答待ちで止めた状態で保存先を A→B に変える → 旧 PUT の成功応答を流しても B の系譜（`lastPushedSha`・`lastPushedRevision`）は変わらず、B へ全件が送られる。トークンだけの変更では世代が変わらない | V5 保存先を変えても送信実績を引き継ぐ → **初回は検出されず**、「保存先を変えると記録を足さなくても全件を新しい保存先へ送る」試験を足して検出（`510a265`） |
+| I14・同じ世代の古い送信（改訂 3 P1-1） | U2: 同じ世代で送信 A の `pendingPush` を消した後に送信 B の `pendingPush` を確定し、A の writeId で `recordPushError`（network／auth／conflict）と `recordPushLanded` を流す → B の `pendingPush`・`errorKind`・sha・revision が変わらない | V1 送信結果で writeId を確かめない → 1 件が落ちた |
+| 今すぐ保存（改訂 3 P2-1） | U2: `auth` で止まった状態で今すぐ保存 → `clearErrorForRetry` でエラーが消えて送信が走る。古い世代を渡した `clearErrorForRetry` は何も書かない | V19 古い世代でも clearErrorForRetry を書く → 1 件が落ちた |
+| I14 の経路 | U2: grep: `meta` の `backup` キーへの put、`secrets`・`preRestoreSnapshot` への書き込みが `src/backup/lineage.ts` だけ（全出現を許可リストと照合） | 静的の見張り（`tests/static.test.ts`）で照合。mutation は U1 の M11 と同じ形のため U2 では行っていない |
+| I8 | U2: 確認後に別タブで記録を足す → 確定で置き換えず再確認へ。確認後に保存先を変える → 同上。確認後に GitHub の sha が変わる → 同上。復元トランザクションの途中で例外 → 端末は元のまま。確定後 `undoRestore` で完全に戻る。GitHub から復元した直後は「保存済み」で、次の変更の PUT が S0 を sha にして成功する | V6 確認時の dataRevision を確かめない → 1 件、V7 確定前に GitHub の sha を確かめ直さない → 1 件、V15 スナップショットを残さない → 1 件が落ちた |
+| JSON 復元と残った pending（P1-3） | U2: ネット不通で `pendingPush` が残った状態で JSON から復元 → `pendingPush` が消え、次の送信は復元後のデータを新しい `writeId` で送る。旧 pending 本文が GitHub に届いていても、復元後のデータが保存済み扱いにならない | V8 復元で pendingPush を残す → 1 件が落ちた |
+| I9 | U2: `schemaVersion: 2`、`format` 違い、`receipts` が配列でない、`revision` が負・小数、`deviceId`・`writeId` が UUID でない、`exportedAt` が不正、1 件だけ不正な記録、`id` の重複の各バックアップで 1 件も適用されない | V14 ID 重複を見ない → 1 件が落ちた |
+| I10 | U2: 書き出し JSON・送信本文・エラー文言にトークン文字列が含まれない。`fetch` の宛先が `api.github.com` だけ | mutation は行っていない（鍵の文字列を本文・URL・エラー・書き出しの全体から探す試験） |
 | I11 | 入力欄にフォーカス中・フォームが未保存・ダイアログ表示中は再読み込みしない。解除後に再読み込みする | |
 | I12 | U1（`tests/stats.test.ts`）: 0 件・1 件・同日 2 件は予測しない（残り回数つき）、サンプル 8 件で 10/29・あと 28 日・約 39 日おき、境界（8 日＝ahead／7 日＝soon／当日＝today／−3＝overdue）、直近 7 日分だけ使う、kg を 0.1 刻みの整数で足す。日付ごとに合算するので「受取日 2 日以上」なら span は必ず 1 以上（span 0 の分岐は持たない）。検証を通った最小の量（0.1 kg）を含む記録でも予測が例外を出さない | M6 受取日 1 日でも予測 → 1 件、M7 窓を広げる → 2 件、M8 kg を小数のまま足す → 1 件、M12 7 日の境界をずらす → 1 件が落ちた |
 | I13 | U1（`tests/repo.test.ts`「I13」）: 版 2 の DB を版 1 で開く → `newer-db-version`、DB の版・store・中身が変わらない。`schemaVersion: 2` → `newer-schema`、`meta.app` 不変・系譜も作らない | M9 `VersionError` を捕まえない → 1 件、M10 `schemaVersion` を確かめない → 1 件が落ちた |
-| §4.1 の契約 | 送るヘッダ・`ref`・PUT の本文の形を固定。応答の `content.sha` を記録し `commit.sha` を記録しない。403（rate limit ヘッダあり／なし）・429・404・一般の 422・sha 不一致の 422・409 の各分類 | |
+| §4.1 の契約 | U2: 送るヘッダ・`ref`・PUT の本文の形を固定。応答の `content.sha` を記録し `commit.sha` を記録しない。403（rate limit ヘッダあり／なし）・429・404・一般の 422・sha 不一致の 422・409 の各分類 | V10 403 を常に auth → 3 件、V11 commit.sha を記録 → 10 件、V16 rate-limit の待ち時刻を見ない → 1 件が落ちた |
 | §3 の経路 | U1（`tests/static.test.ts`）: IndexedDB を開くのは `db.ts` だけ、`meta.backup` の put は `lineage.ts` だけ、`meta.app` の put は `db.ts`・`repo.ts` だけ、記録の store は `repo.ts` だけ、`fetch` は無い（全出現を許可リストと照合）。検索式は型引数つき（`openDB<…>(`）・入れ子の括弧つきの呼び出しも拾う形にした（初版の式はこの 2 つを見落とし、試験が赤になって気づいた）。`api.github.com` の照合は U2 で足す | M11 別ファイルから `indexedDB.open` → 1 件が落ちた |
