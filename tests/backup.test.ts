@@ -282,6 +282,21 @@ describe('I14: 古い送信の結果を新しい系譜へ入れない', () => {
 });
 
 describe('保存先・鍵の変更', () => {
+  it('保存先を変えると、記録を足さなくても全件が新しい保存先へ送られる（前の保存先の sha は使わない）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo, '2026-08-29');
+    await add(d.repo, '2026-09-20');
+    await d.service.push();
+    expect(await state(d.gate)).toMatchObject({ lastPushedRevision: 2, needs: false });
+    await d.service.saveConfig(OTHER);
+    expect(await state(d.gate)).toMatchObject({ lastPushedRevision: null, lastPushedSha: null, needs: true });
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(remote(gh, OTHER_KEY)).toMatchObject({ revision: 2 });
+    expect(remote(gh, OTHER_KEY)!.receipts).toHaveLength(2);
+    expect(appPuts(gh).at(-1)!.body).not.toHaveProperty('sha');
+  });
+
   it('鍵だけの変更は世代を保ち、auth のエラーを消す', async () => {
     const gh = fakeGitHub();
     const d = await device(gh);
