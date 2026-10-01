@@ -376,6 +376,17 @@ describe('§4.1 GitHub Contents API の契約', () => {
     expect(await d2.service.push()).toMatchObject({ errorKind: 'conflict' });
   });
 
+  it('GitHub 側のファイルが消されていたら、古い sha 付きの PUT で作り直す（実物は 201。衝突にしない）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await d.service.push();
+    gh.files.delete(KEY);
+    await add(d.repo);
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(appPuts(gh).at(-1)!.body).toHaveProperty('sha');
+    expect(remote(gh)).toMatchObject({ revision: 1 });
+  });
+
   it('rate-limit の再試行時刻より前は送らない', async () => {
     const gh = fakeGitHub();
     const d = await device(gh);

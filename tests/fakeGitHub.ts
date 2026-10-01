@@ -74,7 +74,7 @@ export function fakeGitHub() {
       const existing = files.get(path);
       const sha = body.sha as string | undefined;
       if (sha === undefined && existing) return json(422, { message: 'Invalid request.\n\n"sha" wasn\'t supplied.' });
-      if (sha !== undefined && !existing) return json(422, { message: 'sha does not match' });
+      // 実物（2026-10-01 に kome-data で実測）: ファイルが無ければ sha を付けても新規作成になり 201 を返す
       if (sha !== undefined && existing && existing.sha !== sha) return json(409, { message: `${path} does not match ${sha}` });
       await hooks.beforeCommit?.(req);
       const newSha = `blob-${++n}`;
