@@ -11,18 +11,28 @@ export interface ValidationError {
 export type ValidationResult = { ok: true; value: Receipt } | { ok: false; errors: ValidationError[] };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/;
 
 export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
 }
 
+/** 書式だけでなく日時の成分が実在するかも確かめる（Date.parse は 2 月 30 日などを繰り上げて通すため） */
 export function isIsoDateTime(value: unknown): value is string {
-  return typeof value === 'string' && ISO_RE.test(value) && !Number.isNaN(Date.parse(value));
+  if (typeof value !== 'string') return false;
+  const m = ISO_RE.exec(value);
+  if (!m) return false;
+  const [, ymd, hh, mm, ss, , , oh, om] = m;
+  if (!isValidYmd(ymd)) return false;
+  if (Number(hh) > 23 || Number(mm) > 59 || Number(ss) > 59) return false;
+  if (oh !== undefined && (Number(oh) > 23 || Number(om) > 59)) return false;
+  return !Number.isNaN(Date.parse(value));
 }
 
-function hasAtMostOneDecimal(kg: number): boolean {
-  return Math.abs(kg * 10 - Math.round(kg * 10)) < 1e-9;
+/** 0.1 kg 刻みの正の値か（10 倍して整数にしたとき 1 以上になること。極小値が 0 に丸められるのを防ぐ） */
+function isPositiveTenth(kg: number): boolean {
+  const t = Math.round(kg * 10);
+  return t >= 1 && Math.abs(kg * 10 - t) < 1e-9;
 }
 
 export function validateReceipt(input: unknown, today: Ymd): ValidationResult {
@@ -42,8 +52,8 @@ export function validateReceipt(input: unknown, today: Ymd): ValidationResult {
 
   if (typeof r.kg !== 'number' || !Number.isFinite(r.kg) || r.kg <= 0 || r.kg > 1000) {
     errors.push({ field: 'kg', message: '量は 0 より大きく 1000 kg 以下で入れてください' });
-  } else if (!hasAtMostOneDecimal(r.kg)) {
-    errors.push({ field: 'kg', message: '量は小数 1 桁までです' });
+  } else if (!isPositiveTenth(r.kg)) {
+    errors.push({ field: 'kg', message: '量は 0.1 kg 刻みで入れてください' });
   }
 
   if (!(r.priceYen === null || (Number.isSafeInteger(r.priceYen) && (r.priceYen as number) >= 0))) {

@@ -74,6 +74,15 @@ export async function openRepo(options: OpenRepoOptions = {}): Promise<OpenRepoR
 }
 
 function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Repo {
+  /** 確定した後の通知。通知の失敗は保存の失敗と分ける（確定した書き込みは成功として返す） */
+  function notifyChanged(): void {
+    try {
+      onChange?.();
+    } catch (e) {
+      console.error('kome: 変更の通知に失敗しました', e);
+    }
+  }
+
   /** 記録の変更と dataRevision +1 を 1 トランザクションで行う */
   async function mutate<T extends Receipt | null>(
     work: (stores: { receipts: ReceiptStore; bump: () => Promise<number> }) => Promise<T>,
@@ -118,22 +127,24 @@ function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Rep
       const checked = validateReceipt(candidate, toLocalYmd(now));
       if (!checked.ok) return { ok: false, kind: 'invalid', errors: checked.errors };
       const receipt = checked.value;
+      let dataRevision: number;
       try {
-        const { dataRevision } = await mutate(async ({ receipts, bump }) => {
+        ({ dataRevision } = await mutate(async ({ receipts, bump }) => {
           await bump();
           await receipts.add(receipt);
           return receipt;
-        });
-        onChange?.();
-        return { ok: true, receipt: { ...receipt }, dataRevision };
+        }));
       } catch (e) {
         return { ok: false, kind: 'failed', message: message(e) };
       }
+      notifyChanged();
+      return { ok: true, receipt: { ...receipt }, dataRevision };
     },
 
     async updateReceipt(id, input, now = new Date()) {
+      let committed: { value: Receipt | null; dataRevision: number };
       try {
-        const { value, dataRevision } = await mutate(async ({ receipts, bump }) => {
+        committed = await mutate(async ({ receipts, bump }) => {
           const existing = await receipts.get(id);
           if (!existing) throw new Aborted({ ok: false, kind: 'not-found' });
           const iso = now.toISOString();
@@ -144,29 +155,30 @@ function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Rep
           await receipts.put(checked.value);
           return checked.value;
         });
-        onChange?.();
-        return { ok: true, receipt: { ...(value as Receipt) }, dataRevision };
       } catch (e) {
         if (e instanceof Aborted) return e.result;
         return { ok: false, kind: 'failed', message: message(e) };
       }
+      notifyChanged();
+      return { ok: true, receipt: { ...(committed.value as Receipt) }, dataRevision: committed.dataRevision };
     },
 
     async deleteReceipt(id) {
+      let dataRevision: number;
       try {
-        const { dataRevision } = await mutate(async ({ receipts, bump }) => {
+        ({ dataRevision } = await mutate(async ({ receipts, bump }) => {
           const existing = await receipts.get(id);
           if (!existing) throw new Aborted({ ok: false, kind: 'not-found' });
           await bump();
           await receipts.delete(id);
           return null;
-        });
-        onChange?.();
-        return { ok: true, dataRevision };
+        }));
       } catch (e) {
         if (e instanceof Aborted && e.result.kind === 'not-found') return { ok: false, kind: 'not-found' };
         return { ok: false, kind: 'failed', message: message(e) };
       }
+      notifyChanged();
+      return { ok: true, dataRevision };
     },
 
     close() {

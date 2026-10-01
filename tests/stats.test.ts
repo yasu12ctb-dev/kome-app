@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { byYear, elapsedDays, intervals, monthlyKg, predictNext, totalKg, unitPriceYen, unpaid } from '../src/domain/stats';
-import { receipt, SAMPLE } from './helpers';
+import { validateReceipt } from '../src/data/validate';
+import { receipt, SAMPLE, uuid } from './helpers';
 
 // I12 と §8.1 の計算の定義を固定する
 
@@ -74,5 +75,19 @@ describe('未払いの数え方', () => {
   it('代金が空の未払いは件数だけ数える', () => {
     const rs = [receipt({ date: '2026-09-01', paid: false, priceYen: null }), receipt({ date: '2026-09-02', paid: false, priceYen: 5000 })];
     expect(unpaid(rs)).toEqual({ count: 2, totalYen: 5000, countWithoutPrice: 1 });
+  });
+});
+
+describe('検証を通った量なら予測は例外を出さない（I2 と I12 のつなぎ）', () => {
+  it('最小の 0.1 kg を含む記録でも予測が日付を返す', () => {
+    const rs = [receipt({ id: uuid(1), date: '2026-09-01', kg: 0.1 }), receipt({ id: uuid(2), date: '2026-09-02', kg: 30 })];
+    for (const r of rs) expect(validateReceipt(r, '2026-10-01').ok).toBe(true);
+    const p = predictNext(rs, '2026-10-01');
+    expect(p.kind).toBe('ok');
+    if (p.kind === 'ok') expect(p.nextDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('0 に丸められる極小値は検証で止まる', () => {
+    expect(validateReceipt(receipt({ id: uuid(3), date: '2026-09-01', kg: 1e-11 }), '2026-10-01').ok).toBe(false);
   });
 });

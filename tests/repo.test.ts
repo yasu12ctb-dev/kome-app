@@ -83,6 +83,23 @@ describe('記録の追加・編集・削除', () => {
 });
 
 describe('I1: 書き込みに失敗したら成功を返さない', () => {
+  it('確定した後の通知が例外を出しても、追加・編集・削除は成功として返る', async () => {
+    const onChange = vi.fn(() => {
+      throw new Error('notify failed');
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const repo = await open(idSource(), onChange);
+    const added = await repo.addReceipt(input, NOW);
+    expect(added).toMatchObject({ ok: true, dataRevision: 1 });
+    if (!added.ok) throw new Error();
+    expect(await repo.updateReceipt(added.receipt.id, { ...input, paid: true }, LATER)).toMatchObject({ ok: true, dataRevision: 2 });
+    expect(await repo.deleteReceipt(added.receipt.id)).toEqual({ ok: true, dataRevision: 3 });
+    expect(onChange).toHaveBeenCalledTimes(3);
+    expect(errors).toHaveBeenCalledTimes(3);
+    errors.mockRestore();
+    repo.close();
+  });
+
   it('DB が閉じていて書けないとき failed を返し、何も残らない', async () => {
     const repo = await open();
     repo.close();
