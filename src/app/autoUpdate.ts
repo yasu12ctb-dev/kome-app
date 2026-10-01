@@ -40,14 +40,18 @@ export function createReloadGate(deps: { busy: () => boolean; reload: () => void
 export interface AutoUpdateDeps {
   win: Window;
   /** vite-plugin-pwa の registerSW */
-  registerSW: (options: { immediate: boolean; onRegisteredSW: (url: string, reg: ServiceWorkerRegistration | undefined) => void }) => unknown;
+  registerSW: (options: {
+    immediate: boolean;
+    onNeedReload: () => void;
+    onRegisteredSW: (url: string, reg: ServiceWorkerRegistration | undefined) => void;
+  }) => unknown;
   checkIntervalMs?: number;
 }
 
-export function setupAutoUpdate(deps: AutoUpdateDeps): void {
+export function setupAutoUpdate(deps: AutoUpdateDeps): ReloadGate | null {
   const { win } = deps;
   const sw = win.navigator.serviceWorker;
-  if (!sw) return;
+  if (!sw) return null;
   // 初回のインストールで制御が付いたときは再読み込みしない
   const hadController = !!sw.controller;
   const gate = createReloadGate({ busy: () => isBusy(win.document), reload: () => win.location.reload() });
@@ -58,6 +62,9 @@ export function setupAutoUpdate(deps: AutoUpdateDeps): void {
   win.setInterval(() => gate.tryReload(), 5_000);
   deps.registerSW({
     immediate: true,
+    // vite-plugin-pwa（autoUpdate）は onNeedReload が無いと、新しい版が有効になった時点で
+    // window.location.reload() を直接呼ぶ（入力中でも）。必ず同じ関門に通す（I11）
+    onNeedReload: () => gate.request(),
     onRegisteredSW(_url, reg) {
       if (!reg) return;
       const check = () => {
@@ -71,6 +78,7 @@ export function setupAutoUpdate(deps: AutoUpdateDeps): void {
       win.addEventListener('focus', check);
     },
   });
+  return gate;
 }
 
 /** 停止モード（I13）から新しい版を取りに行く */

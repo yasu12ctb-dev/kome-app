@@ -16,7 +16,16 @@ export const APP_VERSION: string = __APP_VERSION__;
 export type KomeState =
   | { kind: 'loading' }
   | { kind: 'stopped'; reason: StopReason | 'other-tab-upgrade' }
-  | { kind: 'ready'; receipts: Receipt[]; meta: AppMeta; lineage: Lineage; hasSnapshot: boolean; today: Ymd };
+  | {
+      kind: 'ready';
+      receipts: Receipt[];
+      meta: AppMeta;
+      lineage: Lineage;
+      hasSnapshot: boolean;
+      today: Ymd;
+      /** 別のタブが新しい版で DB を上げた。DB は閉じてあり書けない。入力を終えたら読み込み直す */
+      upgrading: boolean;
+    };
 
 export interface KomeActions {
   add(input: ReceiptInput): Promise<WriteResult>;
@@ -39,13 +48,22 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
   const serviceRef = useRef<BackupService | null>(null);
   const schedulerRef = useRef<PushScheduler | null>(null);
   const channelRef = useRef<ChangeChannel | null>(null);
+  const upgradingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     const repo = repoRef.current;
     const gate = gateRef.current;
-    if (!repo || !gate) return;
+    if (!repo || !gate || upgradingRef.current) return;
     const [receipts, meta, l, hasSnapshot] = await Promise.all([repo.listReceipts(), repo.getAppMeta(), gate.read(), gate.hasPreRestoreSnapshot()]);
-    setState({ kind: 'ready', receipts, meta, lineage: l.lineage, hasSnapshot, today: toLocalYmd(new Date()) });
+    setState((prev) => ({
+      kind: 'ready',
+      receipts,
+      meta,
+      lineage: l.lineage,
+      hasSnapshot,
+      today: toLocalYmd(new Date()),
+      upgrading: prev.kind === 'ready' ? prev.upgrading : false,
+    }));
   }, []);
 
   useEffect(() => {
@@ -61,8 +79,11 @@ export function useKome(): { state: KomeState; actions: KomeActions } {
           channelRef.current?.post();
         },
         onVersionChange: () => {
-          // 別のタブが新しい版で DB を上げた。この画面は閉じて読み込み直す
-          setState({ kind: 'stopped', reason: 'other-tab-upgrade' });
+          // 別のタブが新しい版で DB を上げた。DB は閉じた（db.ts）。画面は残して入力を守り、
+          // 入力を終えた時点で読み込み直す（I11・§3「DB の版上げ」）
+          upgradingRef.current = true;
+          schedulerRef.current?.dispose();
+          setState((prev) => (prev.kind === 'ready' ? { ...prev, upgrading: true } : { kind: 'stopped', reason: 'other-tab-upgrade' }));
           reloadGate.request();
         },
       });

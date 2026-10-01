@@ -54,6 +54,8 @@ export function Settings(props: {
   const [token, setToken] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 保存先・鍵の入力が保存前なら、自動アップデートの再読み込みを待たせる（I11）
+  const dirty = editing && (token !== '' || owner !== (lineage.config?.owner ?? '') || repo !== (lineage.config?.repo ?? 'kome-data'));
   const p = predictNext(props.receipts, props.today);
 
   async function run(fn: () => Promise<void>) {
@@ -81,10 +83,14 @@ export function Settings(props: {
     const config: BackupConfig = { owner: o, repo: r, branch: 'main', path: 'kome-backup.json' };
     await run(async () => {
       const ok = await actions.saveConfig(config, token || undefined);
-      // 鍵は画面に残さない（I10）
-      setToken('');
-      if (ok) setEditing(false);
-      else setMessage('保存できませんでした。もう一度お試しください');
+      if (ok) {
+        // 保存できたら鍵の欄を空にする（鍵は画面に表示しない。I10）
+        setToken('');
+        setEditing(false);
+      } else {
+        // 失敗したら入力をすべて残す（未保存のまま。再読み込みも待たせる）
+        setMessage('保存できませんでした。もう一度お試しください');
+      }
     });
   }
 
@@ -105,7 +111,7 @@ export function Settings(props: {
   }
 
   return (
-    <main className="screen">
+    <main className="screen" data-dirty={dirty ? 'true' : 'false'}>
       <a href="#" className="back">
         ← ホーム
       </a>
@@ -180,7 +186,16 @@ export function Settings(props: {
             保存して送る
           </button>
           {lineage.config && (
-            <button type="button" className="textlink" onClick={() => setEditing(false)}>
+            <button
+              type="button"
+              className="textlink"
+              onClick={() => {
+                setOwner(lineage.config?.owner ?? '');
+                setRepo(lineage.config?.repo ?? 'kome-data');
+                setToken('');
+                setEditing(false);
+              }}
+            >
               やめる
             </button>
           )}

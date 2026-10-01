@@ -103,6 +103,11 @@ export function App() {
 
   return (
     <>
+      {state.upgrading && (
+        <div className="banner" role="status" style={{ margin: 0, position: 'sticky', top: 0, zIndex: 20 }}>
+          新しい版のアプリが別の画面で開かれました。入力を終えると読み込み直します（今は保存できません）。
+        </div>
+      )}
       {screen}
       {conflict && !preview && (
         <ConflictDialog
