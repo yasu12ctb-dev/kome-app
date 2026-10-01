@@ -159,7 +159,9 @@ export function createLineageGate(db: KomeDb, newId: () => string): LineageGate 
         }
       }
       await meta.put(next, 'backup');
-      if (token !== undefined) await tx.objectStore('secrets').put(token, 'githubToken');
+      // 保存先を外したら鍵も消す（設定を外した端末に鍵だけを残さない）
+      if (config === null) await tx.objectStore('secrets').delete('githubToken');
+      else if (token !== undefined) await tx.objectStore('secrets').put(token, 'githubToken');
       await done;
       return true;
     },

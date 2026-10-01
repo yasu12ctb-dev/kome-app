@@ -5,7 +5,7 @@ import { createBackupService, MAX_PUSH_LOOPS, type BackupService } from '../src/
 import { buildBackup } from '../src/backup/format';
 import { openRepo, type Repo } from '../src/data/repo';
 import type { BackupConfig } from '../src/data/types';
-import { deferred, fakeGitHub } from './fakeGitHub';
+import { cutResponse, deferred, fakeGitHub, stalledResponse } from './fakeGitHub';
 import { idSource, uuid } from './helpers';
 
 const TOKEN = 'github_pat_TEST_SECRET_0123456789';
@@ -17,7 +17,7 @@ const NOW = new Date('2026-10-01T03:00:00.000Z');
 
 type Gh = ReturnType<typeof fakeGitHub>;
 
-async function device(gh: Gh, dbName = 'kome', configure = true, idStart = 0) {
+async function device(gh: Gh, dbName = 'kome', configure = true, idStart = 0, timeoutMs?: number) {
   const ids = idSource(idStart);
   const opened = await openRepo({ dbName, newId: ids.next });
   if (opened.kind !== 'ok') throw new Error(opened.reason);
@@ -26,7 +26,7 @@ async function device(gh: Gh, dbName = 'kome', configure = true, idStart = 0) {
     appVersion: '0.1.0',
     newId: ids.next,
     now: () => NOW,
-    client: (token) => createGitHubClient({ token, fetch: gh.fetch, now: () => NOW }),
+    client: (token) => createGitHubClient({ token, fetch: gh.fetch, now: () => NOW, ...(timeoutMs ? { timeoutMs } : {}) }),
   });
   if (configure) await service.saveConfig(TARGET, TOKEN);
   return { repo: opened.repo, gate: opened.lineage, service, ids };
@@ -297,6 +297,17 @@ describe('保存先・鍵の変更', () => {
     expect(appPuts(gh).at(-1)!.body).not.toHaveProperty('sha');
   });
 
+  it('保存先を外すと新しい世代になり、鍵も消える', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    const before = await state(d.gate);
+    expect(await d.service.saveConfig(null)).toBe(true);
+    expect(await state(d.gate)).toMatchObject({ config: null, lastPushedRevision: null, status: 'unset' });
+    expect((await state(d.gate)).generation).not.toBe(before.generation);
+    expect(await d.gate.readToken()).toBeNull();
+    expect(await d.service.push()).toEqual({ kind: 'skipped', reason: 'not-configured' });
+  });
+
   it('鍵だけの変更は世代を保ち、auth のエラーを消す', async () => {
     const gh = fakeGitHub();
     const d = await device(gh);
@@ -396,6 +407,98 @@ describe('§4.1 GitHub Contents API の契約', () => {
     const before = gh.requests.length;
     expect(await d.service.push()).toEqual({ kind: 'skipped', reason: 'waiting-retry' });
     expect(gh.requests.length).toBe(before);
+  });
+});
+
+describe('応答の本文の打ち切りと不正な応答（U2 実装検収 P1-1・P2-1）', () => {
+  it('PUT の本文が止まっても打ち切り時間で network になり、pendingPush を残して Web Lock を手放す', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh, 'kome', true, 0, 30);
+    gh.hooks.onRequest = (req, init) => (req.method === 'PUT' ? stalledResponse(init?.signal, 201, '{"content":') : undefined);
+    expect(await d.service.push()).toMatchObject({ errorKind: 'network' });
+    expect((await state(d.gate)).pendingPush).not.toBeNull();
+    gh.hooks.onRequest = undefined;
+    // ロックが空いているので、すぐ次の送信ができる（照合 → 送り直し）
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+  });
+
+  it('照合の GET の本文が止まっても network で、pendingPush は残る', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh, 'kome', true, 0, 30);
+    await d.service.push();
+    await add(d.repo);
+    gh.hooks.dropResponseAfterCommit = true;
+    await d.service.push();
+    gh.hooks.onRequest = (req, init) => (req.method === 'GET' ? stalledResponse(init?.signal) : undefined);
+    expect(await d.service.push()).toMatchObject({ errorKind: 'network' });
+    expect((await state(d.gate)).pendingPush).not.toBeNull();
+  });
+
+  it('GET の本文の途中で切れたら network（invalid にしない）で、次のきっかけで再試行して保存できる', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await d.service.push();
+    await add(d.repo);
+    gh.hooks.dropResponseAfterCommit = true;
+    await d.service.push();
+    gh.hooks.onRequest = (req) => (req.method === 'GET' ? cutResponse() : undefined);
+    expect(await d.service.push()).toMatchObject({ errorKind: 'network' });
+    gh.hooks.onRequest = undefined;
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+  });
+
+  it('GET 200 の本文が null・base64 が壊れている → invalid（例外を漏らさない）', async () => {
+    for (const body of ['null', JSON.stringify({ type: 'file', encoding: 'base64', sha: 'x', content: '!!!' })]) {
+      globalThis.indexedDB = new (await import('fake-indexeddb')).IDBFactory();
+      const gh = fakeGitHub();
+      const d = await device(gh);
+      gh.hooks.onRequest = (req) => (req.method === 'GET' ? new Response(body, { status: 200 }) : undefined);
+      expect(await d.service.previewRestoreFromGitHub()).toMatchObject({ kind: 'error', errorKind: 'invalid' });
+    }
+  });
+
+  it('PUT 成功の本文が null → network で pendingPush を残し、次の照合で届いたと確かめる', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    let once = true;
+    gh.hooks.onRequest = async (req) => {
+      if (req.method === 'PUT' && once) {
+        once = false;
+        gh.hooks.onRequest = undefined;
+        const real = await gh.fetch(req.url, { method: 'PUT', headers: req.headers, body: JSON.stringify(req.body) });
+        void real;
+        return new Response('null', { status: 201 });
+      }
+    };
+    expect(await d.service.push()).toMatchObject({ errorKind: 'network' });
+    expect((await state(d.gate)).pendingPush).not.toBeNull();
+    const commits = gh.commits.length;
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(gh.commits.length).toBe(commits);
+  });
+});
+
+describe('§4.2 手順 7 の防御の分岐（409／422 のあとの GET が 404）', () => {
+  it('sha を外して 1 回だけやり直し、新規作成で保存できる', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await d.service.push();
+    await add(d.repo);
+    let step = 0;
+    gh.hooks.onRequest = (req) => {
+      if (req.method === 'PUT' && step === 0) {
+        step = 1;
+        return new Response('{}', { status: 409 });
+      }
+      if (req.method === 'GET' && step === 1) {
+        step = 2;
+        gh.files.delete(KEY);
+        return new Response('{}', { status: 404 });
+      }
+    };
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(appPuts(gh).at(-1)!.body).not.toHaveProperty('sha');
+    expect(remote(gh)).toMatchObject({ revision: 1 });
   });
 });
 

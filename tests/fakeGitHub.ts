@@ -8,7 +8,7 @@ export interface FakeRequest {
   body: Record<string, unknown> | null;
 }
 
-type Hook = (req: FakeRequest) => Promise<Response | void> | Response | void;
+type Hook = (req: FakeRequest, init?: RequestInit) => Promise<Response | void> | Response | void;
 
 export function deferred() {
   let resolve!: () => void;
@@ -62,7 +62,7 @@ export function fakeGitHub() {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
     const req: FakeRequest = { method: init?.method ?? 'GET', url, path, headers, body };
     requests.push(req);
-    const override = await hooks.onRequest?.(req);
+    const override = await hooks.onRequest?.(req, init);
     if (override) return override;
 
     if (req.method === 'GET') {
@@ -101,4 +101,26 @@ export function fakeGitHub() {
       return f ? new TextDecoder().decode(f.bytes) : null;
     },
   };
+}
+
+/** 本物の fetch と同じく、要求の signal が中止されたら本文の読み取りを失敗させる応答 */
+export function stalledResponse(signal: AbortSignal | null | undefined, status = 200, partial = ''): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (partial) controller.enqueue(new TextEncoder().encode(partial));
+      signal?.addEventListener('abort', () => controller.error(new DOMException('The operation was aborted.', 'AbortError')));
+    },
+  });
+  return new Response(stream, { status, headers: { 'content-type': 'application/json' } });
+}
+
+/** 本文の途中で接続が切れる応答 */
+export function cutResponse(status = 200, partial = '{"type":"fi'): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(partial));
+      controller.error(new TypeError('network connection was lost'));
+    },
+  });
+  return new Response(stream, { status, headers: { 'content-type': 'application/json' } });
 }

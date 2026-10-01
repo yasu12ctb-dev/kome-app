@@ -34,31 +34,53 @@ function contentsUrl(t: BackupConfig): string {
   return `${API}/repos/${encodeURIComponent(t.owner)}/${encodeURIComponent(t.repo)}/contents/${path}`;
 }
 
+
+type Classified = { errorKind: BackupErrorKind; retryAfter: string | null; message: string };
+
+/** 通信の結果。本文は読む必要があるときだけ、打ち切りの時間の中で読み終えておく */
+interface Raw {
+  status: number;
+  headers: Headers;
+  text: string | null;
+}
+
 /** 403・429 の rate limit 判定と、再試行してよい時刻 */
-function rateLimit(res: Response, now: Date): { limited: boolean; retryAfter: string } {
-  const retryAfterSec = res.headers.get('retry-after');
-  const remaining = res.headers.get('x-ratelimit-remaining');
-  const reset = res.headers.get('x-ratelimit-reset');
-  const limited = res.status === 429 || retryAfterSec !== null || remaining === '0';
+function rateLimit(raw: Raw, now: Date): { limited: boolean; retryAfter: string } {
+  const retryAfterSec = raw.headers.get('retry-after');
+  const remaining = raw.headers.get('x-ratelimit-remaining');
+  const reset = raw.headers.get('x-ratelimit-reset');
+  const limited = raw.status === 429 || retryAfterSec !== null || remaining === '0';
   let at = now.getTime() + 60_000;
   if (retryAfterSec !== null && Number.isFinite(Number(retryAfterSec))) at = now.getTime() + Number(retryAfterSec) * 1000;
   else if (reset !== null && Number.isFinite(Number(reset))) at = Number(reset) * 1000;
   return { limited, retryAfter: new Date(at).toISOString() };
 }
 
-type Classified = { errorKind: BackupErrorKind; retryAfter: string | null; message: string };
-
 /** 成功・404・409・422 以外の状態コードを §4.1 の種類に分ける */
-function classify(res: Response, now: Date): Classified {
-  const message = `HTTP ${res.status}`;
-  if (res.status === 401) return { errorKind: 'auth', retryAfter: null, message };
-  if (res.status === 403 || res.status === 429) {
-    const rl = rateLimit(res, now);
+function classify(raw: Raw, now: Date): Classified {
+  const message = `HTTP ${raw.status}`;
+  if (raw.status === 401) return { errorKind: 'auth', retryAfter: null, message };
+  if (raw.status === 403 || raw.status === 429) {
+    const rl = rateLimit(raw, now);
     if (rl.limited) return { errorKind: 'rate-limit', retryAfter: rl.retryAfter, message };
     return { errorKind: 'auth', retryAfter: null, message };
   }
-  if (res.status >= 500) return { errorKind: 'network', retryAfter: null, message };
+  if (raw.status >= 500) return { errorKind: 'network', retryAfter: null, message };
   return { errorKind: 'invalid', retryAfter: null, message };
+}
+
+const NOT_JSON = Symbol('not-json');
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return NOT_JSON;
+  }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
@@ -70,13 +92,16 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
     Authorization: `Bearer ${options.token}`,
   };
 
-  async function send(url: string, init: RequestInit): Promise<Response | Classified> {
+  /** 要求から本文の読み終わりまでを 1 つの打ち切り時間（15 秒）に収める。途中で止まれば network */
+  async function send(url: string, init: RequestInit, readBody: (status: number) => boolean): Promise<Raw | Classified> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? TIMEOUT_MS);
     try {
-      return await doFetch(url, { ...init, headers, signal: controller.signal, cache: 'no-store' });
+      const res = await doFetch(url, { ...init, headers, signal: controller.signal, cache: 'no-store' });
+      const text = readBody(res.status) ? await res.text() : null;
+      return { status: res.status, headers: res.headers, text };
     } catch (e) {
-      // 鍵を含みうる要求の中身は記録しない（I10）
+      // 通信断・打ち切り・本文の途中切断。鍵を含みうる要求の中身は記録しない（I10）
       return { errorKind: 'network', retryAfter: null, message: e instanceof Error ? e.name : 'network error' };
     } finally {
       clearTimeout(timer);
@@ -85,42 +110,41 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 
   return {
     async get(target) {
-      const res = await send(`${contentsUrl(target)}?ref=${encodeURIComponent(target.branch)}`, { method: 'GET' });
-      if (!(res instanceof Response)) return { kind: 'error', ...res };
-      if (res.status === 404) return { kind: 'not-found' };
-      if (res.status !== 200) return { kind: 'error', ...classify(res, now()) };
-      let body: { type?: unknown; encoding?: unknown; sha?: unknown; content?: unknown };
-      try {
-        body = await res.json();
-      } catch {
-        return { kind: 'error', errorKind: 'invalid', retryAfter: null, message: '応答が JSON ではありません' };
-      }
-      if (body.type !== 'file' || body.encoding !== 'base64' || typeof body.sha !== 'string' || typeof body.content !== 'string') {
+      const raw = await send(`${contentsUrl(target)}?ref=${encodeURIComponent(target.branch)}`, { method: 'GET' }, (st) => st === 200);
+      if (!('status' in raw)) return { kind: 'error', ...raw };
+      if (raw.status === 404) return { kind: 'not-found' };
+      if (raw.status !== 200) return { kind: 'error', ...classify(raw, now()) };
+      // 読めた本文の形が違うのは invalid（通信の失敗とは分ける）
+      const body = parseJson(raw.text ?? '');
+      if (!isRecord(body) || body.type !== 'file' || body.encoding !== 'base64' || typeof body.sha !== 'string' || typeof body.content !== 'string') {
         return { kind: 'error', errorKind: 'invalid', retryAfter: null, message: 'ファイルの形式が想定と違います' };
       }
-      return { kind: 'ok', sha: body.sha, bytes: fromBase64(body.content) };
+      let bytes: Uint8Array<ArrayBuffer>;
+      try {
+        bytes = fromBase64(body.content);
+      } catch {
+        return { kind: 'error', errorKind: 'invalid', retryAfter: null, message: 'ファイルの中身を読めません' };
+      }
+      return { kind: 'ok', sha: body.sha, bytes };
     },
 
     async put(target, { bytes, message, sha }) {
       const payload: Record<string, string> = { message, content: toBase64(bytes), branch: target.branch };
       if (sha !== null) payload.sha = sha;
-      const res = await send(contentsUrl(target), { method: 'PUT', body: JSON.stringify(payload) });
-      if (!(res instanceof Response)) return { kind: 'error', ...res };
-      if (res.status === 200 || res.status === 201) {
-        let body: { content?: { sha?: unknown } };
-        try {
-          body = await res.json();
-        } catch {
-          return { kind: 'error', errorKind: 'network', retryAfter: null, message: '応答が JSON ではありません' };
-        }
+      const raw = await send(contentsUrl(target), { method: 'PUT', body: JSON.stringify(payload) }, (st) => st === 200 || st === 201);
+      if (!('status' in raw)) return { kind: 'error', ...raw };
+      if (raw.status === 200 || raw.status === 201) {
+        // 確定はしたが成功の情報を読めない → network（届いたかは次回の照合で確かめる）
+        const body = parseJson(raw.text ?? '');
+        const content = isRecord(body) ? body.content : undefined;
         // 次回に使うのは content.sha（blob sha）。commit.sha は使わない
-        const contentSha = body.content?.sha;
-        if (typeof contentSha !== 'string') return { kind: 'error', errorKind: 'network', retryAfter: null, message: 'content.sha がありません' };
+        const contentSha = isRecord(content) ? content.sha : undefined;
+        if (typeof contentSha !== 'string') return { kind: 'error', errorKind: 'network', retryAfter: null, message: '成功の応答を読めません' };
         return { kind: 'ok', sha: contentSha };
       }
-      if (res.status === 409 || res.status === 422) return { kind: 'conflict-candidate', status: res.status };
-      if (res.status === 404) return { kind: 'error', errorKind: 'config', retryAfter: null, message: 'HTTP 404' };
-      return { kind: 'error', ...classify(res, now()) };
+      if (raw.status === 409 || raw.status === 422) return { kind: 'conflict-candidate', status: raw.status };
+      if (raw.status === 404) return { kind: 'error', errorKind: 'config', retryAfter: null, message: 'HTTP 404' };
+      return { kind: 'error', ...classify(raw, now()) };
     },
   };
 }
