@@ -186,6 +186,8 @@ type Lineage = {
 
 **送信のきっかけ**: 端末での変更の 3 秒後（連続した変更はまとめる）／起動時／画面が前面に戻ったとき／`online` イベント／`saveConfig` の後／設定画面の「今すぐ保存」。止める種類のエラーがあるときは、ユーザー操作（設定の保存・今すぐ保存・衝突の解決）以外のきっかけでは送らない。「今すぐ保存」は Web Lock 内で関所 `clearErrorForRetry(generation)` を呼んで `errorKind`・`retryAfter` を消してから送る（`pendingPush` は触らない。残っていれば照合から始まる）。
 
+**実装の段階（U2 実装検収 2026-10-01 で明記）**: U2 はサービス層（`push()`・`retryNow()`・`saveConfig()`・復元）まで。上のきっかけ（3 秒のまとめ・起動時・前面復帰・`online`・設定の保存後）から `push()` を呼ぶ接続と、§7 の `BroadcastChannel` は U3 で画面と一緒につなぐ。U3 の必須試験: 連続した変更が 1 回の送信にまとまる、起動時・前面復帰・`online` で保存待ちなら送る、止める種類のエラーでは自動のきっかけで送らない、別タブの変更通知で読み直す
+
 ### 4.1 GitHub Contents API の契約
 
 - 共通ヘッダ: `Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`、`Authorization: Bearer <token>`。宛先は `https://api.github.com/repos/{owner}/{repo}/contents/{path}` だけ
@@ -202,6 +204,9 @@ type Lineage = {
   - 5xx・ネット不通・タイムアウト → `network`
 - GET の 404 の扱い: リポジトリ自体が無い・見えない場合も GitHub は 404 を返すので、ファイルの有無と区別できない。「ファイルが無い」と読んでよいのは §4.2 で明記した箇所だけで、その後の PUT が 404 なら `config` になる
 - CORS: GitHub REST API は任意の origin からの CORS に対応し、preflight で `Authorization` ヘッダと `PUT` を許可している（公式ドキュメントで 2026-09-30 確認）
+- 打ち切り（15 秒）は、要求から**本文の読み終わりまで**に掛ける。打ち切り・通信断・本文の途中切断は `network`
+- 読めた本文の形が違う（GET 200 の JSON が null・`type`／`encoding` が違う・base64 が壊れている）は `invalid`。PUT 200／201 のあと成功の情報（`content.sha`）を読めないときは、確定したかもしれないので `network` として `pendingPush` を残す（次回の照合で確かめる）。どの場合も例外を外へ漏らさず、種類つきの結果で返す
+- 実測（2026-10-01、`kome-data`）: 対象ファイルが無いとき、sha を付けた PUT でも GitHub は **201 で新規作成**する。そのため §4.2 手順 7 の「GET 404 で sha を外して 1 回だけやり直す」は実物では到達しない防御の分岐として残す（試験は応答の差し替えで再現）
 
 ### 4.2 1 回の送信（`backup.push`）
 
@@ -245,14 +250,14 @@ type Lineage = {
 
 | 操作 | 前提の確認 | 書く内容 | 呼ぶ者 |
 |---|---|---|---|
-| `saveConfig(expectedGeneration, config, token?)` | Web Lock 内。世代の一致 | 保存先が変わった（または null から設定した）: 新しい `generation`、`lastPushedSha = null`、`lastPushedRevision = null`、`pendingPush = null`、`errorKind = null`、`retryAfter = null`、トークン。**トークンだけ**の変更: 系譜はそのまま、トークンを書き、`errorKind` が `auth`／`config` なら消す | 設定画面 |
+| `saveConfig(expectedGeneration, config, token?)` | Web Lock 内。世代の一致 | 保存先が変わった（または null から設定した）: 新しい `generation`、`lastPushedSha = null`、`lastPushedRevision = null`、`pendingPush = null`、`errorKind = null`、`retryAfter = null`、トークン。**トークンだけ**の変更: 系譜はそのまま、トークンを書き、`errorKind` が `auth`／`config` なら消す。**保存先を外す**（config を null）: 新しい世代・送信記録なしにし、鍵（`secrets.githubToken`）も消す | 設定画面 |
 | `beginPush(gen, pending)` | 世代の一致、`pendingPush` が null | `pendingPush` | §4.2 手順 5 |
 | `recordPushLanded(gen, writeId, sha)` | 世代と `writeId` の一致 | `lastPushedSha = sha`、`lastPushedRevision = max(現在値 ?? -1, pendingPush.revision)`、`lastPushedAt`、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.2 手順 3・7 |
 | `clearPending(gen, writeId)` | 世代と `writeId` の一致 | `pendingPush = null` | §4.2 手順 3 |
 | `resetRemote(gen, writeId)` | 世代と `writeId` の一致 | `lastPushedSha = null`、`pendingPush = null` | §4.2 手順 7 |
 | `recordPushError(gen, writeId, kind, keepPending, retryAfter?)` | 世代の一致、かつ `pendingPush?.writeId === writeId`（照合・送信の結果に限る。`writeId` を持たないエラー操作は置かない） | `errorKind`、`retryAfter`、`lastErrorMessage`、`keepPending` が偽なら `pendingPush = null` | §4.2 |
 | `clearErrorForRetry(gen)` | Web Lock 内。世代の一致 | `errorKind = null`、`retryAfter = null`（`pendingPush`・sha・revision は触らない） | 「今すぐ保存」（§4.0） |
-| `adoptRemoteSha(gen, sha)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
+| `adoptRemoteSha(gen, sha \| null)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`（null ならファイルが無い）、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
 | `restore(expected, backup, source)` | Web Lock 内。世代の一致、`dataRevision` = 確認時の D0 | §6.1 手順 3 のとおり（記録の全件入れ替えを含む） | §6.1 |
 | `undoRestore(gen)` | Web Lock 内。世代の一致、`preRestoreSnapshot` がある | 記録を戻し、スナップショットを消し、`dataRevision` +1、`pendingPush = null`、`errorKind = null`、`retryAfter = null`（系譜の sha・revision はそのまま → `needsPush` になり、次の送信で GitHub も取り消し後の内容になる。取り消し前の GitHub の内容は git の履歴に残る） | 設定画面 |
 
@@ -289,7 +294,7 @@ type Lineage = {
 4. `navigator.storage.persist()` を要求。ホーム画面から起動していない（`display-mode: standalone` でない）ときは追加を促す
 5. 自動アップデートを準備（Libroli の方式: `controllerchange` で再読み込みを予約し、I11 の条件を満たしたら実行。前面復帰・フォーカス時と 1 時間ごとに `registration.update()`）
 6. 画面を描く（記録を読んで計算。GitHub の結果を待たない）
-7. 裏で `backup.push()`（手順 3 の照合を含む。画面の描画を待たせない）
+7. 裏で `backup.push()`（手順 3 の照合を含む。画面の描画を待たせない）（起動時の呼び出しは U3 でつなぐ。§4.0「実装の段階」）
 8. 知らない `errorKind` の値に出会ったら `null` として扱う
 
 ### 6.1 復元（GitHub から／JSON ファイルから）
@@ -317,7 +322,7 @@ type Lineage = {
 - **送信中に端末が変わる**: `lastPushedRevision = R`（送ったときの番号）にするので `needsPush` が残り、送り直す（I6）
 - **復元の確認中に別タブで変更**: 確定時に D0・G0 と比べて検出し、置き換えない（§6.1 手順 3）
 - **await をまたぐ読み取り**: 写しは 1 つの読み取りトランザクション（`dataRevision` と全件）から作る。IndexedDB のトランザクションは、中で fetch や SHA-256 の計算を待つと自動で閉じるので、トランザクションの中でそれらを待たない（読み終えてから計算・通信する）。関所の各操作も、トランザクションの中では IndexedDB の読み書きだけを行う
-- **複数タブ**: 変更後に `BroadcastChannel` で知らせ、他タブは読み直す。DB の版上げは `versionchange` で古いタブが閉じる
+- **複数タブ**: 変更後に `BroadcastChannel` で知らせ、他タブは読み直す。DB の版上げは `versionchange` で古いタブが閉じる（`BroadcastChannel` は U3 でつなぐ。§4.0「実装の段階」）
 - **再入**: `repo` の関数の中から `backup.push` を直接呼ばない（送信は「予約」だけ。トランザクションの外で走らせる）。`backup.push` の中から `repo` の書き込み関数を呼ばない。関所の操作の中から他の関所の操作・`backup.push` を呼ばない。Web Lock を持っている処理の中で、もう一度 Web Lock を取らない（関所の `saveConfig`・`restore` 等は、ロックを持つ呼び出し側の中で呼ぶ）
 
 ## 8. 既知の限界・後回し
@@ -349,7 +354,7 @@ type Lineage = {
 
 ## 9. 不変条件と試験の対応
 
-試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。U1 実装検収（2026-10-01、P1×2・P2×1）の修正後: Vitest 60/60、追加の mutation N1〜N4 を検出（下表）。N5（時差の範囲チェックを外す）は検出されず、`Date.parse` が既に拒むため効いていない重複と判断してコードから外した。U2 の結果: 実装 `60598e9`・試験追加 `510a265`、`tsc --noEmit` 指摘なし、Vitest 110/110（backup 35・format 15・repo 14・static 6・stats 11・validate 29）、mutation V1〜V20 を検出（V5 は初回見逃し → 試験を追加して検出。V13 周回の上限を広げる → 1 件が落ちた）。試験用の GitHub は `tests/fakeGitHub.ts`（sha の照合・409／422・PUT 確定後の応答喪失・barrier を再現）。
+試験は Vitest ＋ `fake-indexeddb`、GitHub は `fetch` の差し替えで決定的に行う（送信の途中で止める試験は、差し替えた `fetch` の中の barrier で止め、合図を受けてから次の操作を呼ぶ）。結果の列は実装後に埋める。U1 の結果: commit `c0fe80b`、`tsc --noEmit` 指摘なし、Vitest 48/48、mutation 12 通りすべて検出（壊した実装は `git checkout` で戻した）。U1 実装検収（2026-10-01、P1×2・P2×1）の修正後: Vitest 60/60、追加の mutation N1〜N4 を検出（下表）。N5（時差の範囲チェックを外す）は検出されず、`Date.parse` が既に拒むため効いていない重複と判断してコードから外した。U2 の結果: 実装 `60598e9`・試験追加 `510a265`、`tsc --noEmit` 指摘なし、Vitest 110/110（backup 35・format 15・repo 14・static 6・stats 11・validate 29）、mutation V1〜V20 を検出（V5 は初回見逃し → 試験を追加して検出。V13 周回の上限を広げる → 1 件が落ちた）。試験用の GitHub は `tests/fakeGitHub.ts`（sha の照合・409／422・PUT 確定後の応答喪失・barrier を再現）。U2 実装検収（2026-10-01、P1×1・P2×1）の修正 `3c136fc` 後: Vitest 118/118。追加の mutation W1 本文を打ち切りの外で読む → 16 件（止まった通信がロックを握ったままになり後続も落ちる）、W2 GET 本文の形を確かめない → 1 件、W3 base64 の失敗を捕まえない → 1 件、W4 PUT 成功の本文の形を確かめない → 1 件、W5 保存先を外しても鍵を消さない → 1 件、W6 GET 404 でやり直す防御の分岐を外す → 1 件が落ちた。偽の GitHub は実物に合わせ、ファイルが無ければ sha 付き PUT でも 201 を返す（`51c14d6`）。
 
 | 不変条件 | 試験（予定） | 壊して確かめたこと（mutation） |
 |---|---|---|
