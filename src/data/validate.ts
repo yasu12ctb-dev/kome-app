@@ -11,21 +11,23 @@ export interface ValidationError {
 export type ValidationResult = { ok: true; value: Receipt } | { ok: false; errors: ValidationError[] };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/;
+const ISO_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
 export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
 }
 
-/** 書式だけでなく日時の成分が実在するかも確かめる（Date.parse は 2 月 30 日などを繰り上げて通すため） */
+/**
+ * 書式だけでなく日時の成分が実在するかも確かめる。Date.parse は 2 月 30 日と 24 時を通すため、
+ * 日付と時を自前で確かめる（分・秒の 60 と時差の 24 時間は Date.parse が拒む。試験で確認済み）
+ */
 export function isIsoDateTime(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const m = ISO_RE.exec(value);
   if (!m) return false;
-  const [, ymd, hh, mm, ss, , , oh, om] = m;
+  const [, ymd, hh, mm, ss] = m;
   if (!isValidYmd(ymd)) return false;
   if (Number(hh) > 23 || Number(mm) > 59 || Number(ss) > 59) return false;
-  if (oh !== undefined && (Number(oh) > 23 || Number(om) > 59)) return false;
   return !Number.isNaN(Date.parse(value));
 }
 
