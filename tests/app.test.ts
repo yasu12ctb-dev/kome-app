@@ -1,0 +1,150 @@
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createReloadGate, isBusy } from '../src/app/autoUpdate';
+import { createChangeChannel } from '../src/app/channel';
+import { buildIcs } from '../src/app/ics';
+import { attachPushTriggers, createPushScheduler, PUSH_DEBOUNCE_MS } from '../src/app/scheduler';
+
+afterEach(() => {
+  vi.useRealTimers();
+  document.body.innerHTML = '';
+});
+
+describe('送信のきっかけ（§4.0・U3 の必須試験）', () => {
+  it('連続した変更は、最後の変更から 3 秒後の 1 回の送信にまとまる', async () => {
+    vi.useFakeTimers();
+    const push = vi.fn(async () => {});
+    const s = createPushScheduler({ push });
+    s.notifyChange();
+    vi.advanceTimersByTime(2000);
+    s.notifyChange();
+    vi.advanceTimersByTime(2999);
+    expect(push).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(PUSH_DEBOUNCE_MS).toBe(3000);
+  });
+
+  it('送信中に来たきっかけは、終わってからもう 1 回だけ送る（同時に 2 本走らない）', async () => {
+    let release!: () => void;
+    let running = 0;
+    let maxRunning = 0;
+    const push = vi.fn(async () => {
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise<void>((r) => (release = r));
+      running -= 1;
+    });
+    const s = createPushScheduler({ push });
+    s.triggerNow();
+    s.triggerNow();
+    s.triggerNow();
+    await Promise.resolve();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(maxRunning).toBe(1);
+  });
+
+  it('前面に戻ったとき・online になったときにすぐ送る', () => {
+    const s = { notifyChange: vi.fn(), triggerNow: vi.fn(), dispose: vi.fn() };
+    const detach = attachPushTriggers(s, window);
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('online'));
+    expect(s.triggerNow).toHaveBeenCalledTimes(2);
+    detach();
+    window.dispatchEvent(new Event('online'));
+    expect(s.triggerNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('送信が例外を出してもきっかけは止まらない', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const push = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const s = createPushScheduler({ push });
+    s.triggerNow();
+    await new Promise((r) => setTimeout(r, 0));
+    s.triggerNow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(push).toHaveBeenCalledTimes(2);
+    errors.mockRestore();
+  });
+});
+
+describe('I11: 自動アップデートの再読み込みを待つ条件', () => {
+  it('入力欄にフォーカス・未保存のフォーム・ダイアログ表示中は busy、どれも無ければ busy でない', () => {
+    expect(isBusy(document)).toBe(false);
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    expect(isBusy(document)).toBe(true);
+    input.blur();
+    expect(isBusy(document)).toBe(false);
+    const form = document.createElement('main');
+    form.dataset.dirty = 'true';
+    document.body.append(form);
+    expect(isBusy(document)).toBe(true);
+    form.dataset.dirty = 'false';
+    expect(isBusy(document)).toBe(false);
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.append(dialog);
+    expect(isBusy(document)).toBe(true);
+    dialog.remove();
+    expect(isBusy(document)).toBe(false);
+  });
+
+  it('busy の間は再読み込みを予約だけし、解除されたら 1 回だけ再読み込みする', () => {
+    let busy = true;
+    const reload = vi.fn();
+    const gate = createReloadGate({ busy: () => busy, reload });
+    gate.request();
+    gate.tryReload();
+    expect(reload).not.toHaveBeenCalled();
+    busy = false;
+    gate.tryReload();
+    gate.tryReload();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('予約が無ければ再読み込みしない', () => {
+    const reload = vi.fn();
+    createReloadGate({ busy: () => false, reload }).tryReload();
+    expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe('§8.1 カレンダー（.ics）', () => {
+  it('予測日に終日の予定、3 日前に通知、UID は端末ごとに固定、改行は CRLF', () => {
+    const ics = buildIcs('2026-10-29', 'dev-1', new Date('2026-10-01T03:00:00.000Z'));
+    const lines = ics.split('\r\n');
+    expect(lines).toContain('UID:kome-next@dev-1');
+    expect(lines).toContain('DTSTART;VALUE=DATE:20261029');
+    expect(lines).toContain('DTEND;VALUE=DATE:20261030');
+    expect(lines).toContain('TRIGGER:-P3D');
+    expect(lines).toContain('DTSTAMP:20261001T030000Z');
+    expect(ics.endsWith('END:VCALENDAR\r\n')).toBe(true);
+  });
+
+  it('月末・年末の翌日を正しく出す', () => {
+    expect(buildIcs('2026-12-31', 'd', new Date()).includes('DTEND;VALUE=DATE:20270101')).toBe(true);
+    expect(buildIcs('2028-02-28', 'd', new Date()).includes('DTEND;VALUE=DATE:20280229')).toBe(true);
+  });
+});
+
+describe('§7 別タブへの変更の通知（U3 の必須試験）', () => {
+  it('一方のタブの post を、もう一方のタブが受けて読み直す', async () => {
+    const received = vi.fn();
+    const a = createChangeChannel(() => {}, 'kome-test');
+    const b = createChangeChannel(received, 'kome-test');
+    a.post();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toHaveBeenCalledTimes(1);
+    a.close();
+    b.close();
+  });
+});

@@ -15,14 +15,17 @@
     "isolatedModules": true,
     "noEmit": true,
     "types": [
-      "node"
-    ]
+      "node",
+      "vite/client"
+    ],
+    "jsx": "react-jsx"
   },
   "include": [
     "src",
     "tests",
     "spike/gate",
     "vitest.config.ts",
+    "vite.config.ts",
     "vite.gate.config.ts"
   ]
 }
