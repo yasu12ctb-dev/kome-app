@@ -31,19 +31,20 @@ describe('§3 データを変えうる経路', () => {
     expect(filesMatching(/\.put\([^;]*?,\s*['"]backup['"]\s*\)/)).toEqual(['src/backup/lineage.ts']);
   });
 
-  it("meta の 'app' を書くのは db.ts（初期化）と repo.ts（dataRevision）だけ", () => {
-    expect(filesMatching(/\.put\([^;]*?,\s*['"]app['"]\s*\)/)).toEqual(['src/data/db.ts', 'src/data/repo.ts']);
+  it("meta の 'app' を書くのは db.ts（初期化）・repo.ts（dataRevision）・lineage.ts（復元と取り消し）だけ", () => {
+    expect(filesMatching(/\.put\([^;]*?,\s*['"]app['"]\s*\)/)).toEqual(['src/backup/lineage.ts', 'src/data/db.ts', 'src/data/repo.ts']);
   });
 
-  it('記録の store を書くのは repo.ts だけ（U1 時点。U2 で lineage.ts の復元が加わる）', () => {
-    expect(filesMatching(/objectStore\(\s*['"]receipts['"]\s*\)/)).toEqual(['src/data/repo.ts']);
+  it('記録の store を開くのは repo.ts（追加・編集・削除）と lineage.ts（復元・取り消し・写しの読み取り）だけ', () => {
+    expect(filesMatching(/objectStore\(\s*['"]receipts['"]\s*\)/)).toEqual(['src/backup/lineage.ts', 'src/data/repo.ts']);
   });
 
-  it("'secrets'・'preRestoreSnapshot' は U1 では db.ts の定義以外に出てこない", () => {
-    expect(filesMatching(/['"](secrets|preRestoreSnapshot)['"]/)).toEqual(['src/data/db.ts']);
+  it("'secrets'・'preRestoreSnapshot' を扱うのは db.ts（定義）と lineage.ts だけ", () => {
+    expect(filesMatching(/['"](secrets|preRestoreSnapshot)['"]/)).toEqual(['src/backup/lineage.ts', 'src/data/db.ts']);
   });
 
-  it('U1 では外部への通信（fetch）が無い', () => {
-    expect(filesMatching(/\bfetch\s*\(/)).toEqual([]);
+  it('外部への通信（fetch）と api.github.com は src/backup/github.ts だけ', () => {
+    expect(filesMatching(/\bfetch\s*\(/)).toEqual(['src/backup/github.ts']);
+    expect(filesMatching(/api\.github\.com/)).toEqual(['src/backup/github.ts']);
   });
 });

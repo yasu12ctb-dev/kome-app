@@ -1,5 +1,6 @@
 import type { IDBPObjectStore } from 'idb';
 import { toLocalYmd } from './date';
+import { createLineageGate, type LineageGate } from '../backup/lineage';
 import { openKomeDb, type KomeDb, type KomeSchema, type StopReason } from './db';
 import type { AppMeta, Receipt } from './types';
 import { validateReceipt, type ValidationError } from './validate';
@@ -35,7 +36,9 @@ export interface Repo {
   close(): void;
 }
 
-export type OpenRepoResult = { kind: 'ok'; repo: Repo } | { kind: 'stopped'; reason: StopReason; detail?: string };
+export type OpenRepoResult =
+  | { kind: 'ok'; repo: Repo; lineage: LineageGate }
+  | { kind: 'stopped'; reason: StopReason; detail?: string };
 
 export interface OpenRepoOptions {
   dbName?: string;
@@ -70,7 +73,7 @@ export async function openRepo(options: OpenRepoOptions = {}): Promise<OpenRepoR
     ...(options.onVersionChange ? { onVersionChange: options.onVersionChange } : {}),
   });
   if (opened.kind === 'stopped') return opened;
-  return { kind: 'ok', repo: createRepo(opened.db, newId, options.onChange) };
+  return { kind: 'ok', repo: createRepo(opened.db, newId, options.onChange), lineage: createLineageGate(opened.db, newId) };
 }
 
 function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Repo {

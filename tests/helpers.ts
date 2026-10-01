@@ -5,8 +5,8 @@ export function uuid(n: number): string {
 }
 
 /** 呼ぶたびに別の UUID を返す。fixed を設定すると、その値を返し続ける（ID の衝突を起こす試験用） */
-export function idSource() {
-  let n = 0;
+export function idSource(start = 0) {
+  let n = start;
   const source = {
     fixed: null as string | null,
     next: () => source.fixed ?? uuid(++n),
