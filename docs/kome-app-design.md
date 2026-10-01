@@ -322,7 +322,7 @@ type Lineage = {
 
 ### 6.2 読み込み直しの状態遷移（改訂 4）
 
-ページを読み込み直す理由は 2 つある。どちらも **同じ 1 つの窓口（`ReloadCoordinator`、`src/app/reload.ts`）** に予約し、窓口だけが `location.reload()` を呼ぶ。
+ページを読み込み直す理由は 2 つある。どちらも **同じ 1 つの窓口（`ReloadCoordinator`、`src/app/reload.ts`）** に予約し、窓口だけが `location.reload()` を呼ぶ。vite-plugin-pwa（autoUpdate）は `onNeedReload` を渡さないと内部で `window.location.reload()` を直接呼ぶ（`node_modules/vite-plugin-pwa/dist/client/build/register.js`）ので、必ず `onNeedReload` で窓口へ予約させ、この内部の経路を使わせない。今のコードの関門 2 つ（`autoUpdate.ts` の `createReloadGate` と `useKome.ts` の `reloadGate`）は、この窓口 1 つに置き換える。
 
 | 理由 | 予約するもの | 予約の時点の状態 |
 |---|---|---|
