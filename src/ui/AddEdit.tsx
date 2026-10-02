@@ -8,6 +8,15 @@ import { kg as fmtKg } from './format';
 
 const QUICK = [10, 20, 30];
 
+/** 桁が増えたら字を小さくし、どの値でも画面の幅に収める（「30」はいちばん大きく） */
+function kgFontSize(text: string): string {
+  const n = Math.max(2, text.length);
+  if (n <= 2) return 'clamp(120px, 48vw, 190px)';
+  if (n === 3) return 'clamp(96px, 36vw, 150px)';
+  if (n === 4) return 'clamp(76px, 28vw, 120px)';
+  return 'clamp(56px, 20vw, 90px)';
+}
+
 export function AddEdit(props: {
   today: Ymd;
   editing: Receipt | null;
@@ -83,7 +92,13 @@ export function AddEdit(props: {
           量
         </label>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-          <input id="kg" className="kg-input" inputMode="decimal" value={kgText} style={{ width: `${Math.max(2, kgText.length) * 0.62}em` }} onChange={(ev) => touch(setKgText)(ev.target.value)} aria-describedby="kg-unit" />
+          {/* 入力欄の幅は、同じ文字・同じ書体の見えない写しの実際の幅に合わせる（太い数字が欄からはみ出して切れないように） */}
+          <span className="kg-field" style={{ ['--kg-size' as string]: kgFontSize(kgText) }}>
+            <span className="kg-mirror" aria-hidden="true">
+              {kgText || '0'}
+            </span>
+            <input id="kg" className="kg-input" inputMode="decimal" size={1} value={kgText} onChange={(ev) => touch(setKgText)(ev.target.value)} aria-describedby="kg-unit" />
+          </span>
           <span id="kg-unit" style={{ fontSize: 44, fontWeight: 800, paddingBottom: 10 }}>
             kg
           </span>

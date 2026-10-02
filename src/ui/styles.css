@@ -123,7 +123,11 @@ a { color: inherit; }
 .errors { margin: 10px 0 0; padding: 10px 12px; border: 2px solid var(--shu); color: var(--shu); font-size: 14px; font-weight: 700; list-style: none; }
 
 /* 記録の追加 */
-.kg-input { border: 0; background: transparent; font-family: var(--num); font-weight: 900; font-size: clamp(120px, 48vw, 190px); line-height: 0.9; letter-spacing: -0.05em; max-width: 72vw; padding: 0; margin-left: -6px; }
+.kg-field { display: inline-grid; max-width: 74vw; margin-left: -6px; }
+.kg-field > * { grid-area: 1 / 1; font-family: var(--num); font-weight: 900; font-size: var(--kg-size, clamp(120px, 48vw, 190px)); line-height: 0.9; letter-spacing: -0.05em; }
+/* 字間を詰めると最後の字が字送りより右へはみ出すので、写しの右に余白を足して欄の幅に含める */
+.kg-mirror { visibility: hidden; white-space: pre; padding-right: 0.12em; }
+.kg-input { width: 100%; min-width: 0; border: 0; background: transparent; padding: 0; }
 .steps { display: grid; grid-template-columns: 56px repeat(3, minmax(0, 1fr)) 56px; gap: 8px; margin-top: 16px; }
 .steps button { min-height: 52px; border: 2.5px solid var(--ink); background: transparent; font-size: 16px; font-weight: 800; cursor: pointer; }
 .steps button[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); }
