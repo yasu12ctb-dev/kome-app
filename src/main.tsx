@@ -4,11 +4,14 @@ import { registerSW } from 'virtual:pwa-register';
 import { setupAutoUpdate } from './app/autoUpdate';
 import { appReloadCoordinator } from './app/reload';
 import { App } from './ui/App';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import './ui/styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
 

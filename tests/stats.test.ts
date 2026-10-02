@@ -91,3 +91,17 @@ describe('検証を通った量なら予測は例外を出さない（I2 と I12
     expect(validateReceipt(receipt({ id: uuid(3), date: '2026-09-01', kg: 1e-11 }), '2026-10-01').ok).toBe(false);
   });
 });
+
+describe('予測が日付の範囲を超えるとき（バグ点検 P1-1）', () => {
+  it('0.1 kg と 1000 kg のように極端な組み合わせでも例外を出さず、予測できないと返す', () => {
+    const rs = [receipt({ id: uuid(11), date: '2020-01-01', kg: 0.1 }), receipt({ id: uuid(12), date: '2026-10-03', kg: 1000 })];
+    for (const r of rs) expect(validateReceipt(r, '2026-10-03').ok).toBe(true);
+    expect(predictNext(rs, '2026-10-03')).toEqual({ kind: 'none', reason: 'out-of-range' });
+  });
+
+  it('上限ちょうど（10 年）までは予測する', () => {
+    // 1 日 1kg のペースで、最後に 3650kg …は量の上限を超えるので、間隔で作る: 1 日 0.1kg・最後 365kg → 3650 日
+    const rs = [receipt({ id: uuid(13), date: '2026-01-01', kg: 0.1 }), receipt({ id: uuid(14), date: '2026-01-02', kg: 365 })];
+    expect(predictNext(rs, '2026-01-02')).toMatchObject({ kind: 'ok', daysUntil: 3650 });
+  });
+});

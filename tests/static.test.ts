@@ -43,8 +43,8 @@ describe('§3 データを変えうる経路', () => {
     expect(filesMatching(/['"](secrets|preRestoreSnapshot)['"]/)).toEqual(['src/backup/lineage.ts', 'src/data/db.ts']);
   });
 
-  it('読み込み直し（location.reload）を呼ぶのは窓口 src/app/reload.ts と停止画面のボタン（App.tsx）だけ（§6.2）', () => {
-    expect(filesMatching(/location\.reload\s*\(/)).toEqual(['src/app/reload.ts', 'src/ui/App.tsx']);
+  it('読み込み直し（location.reload）を呼ぶのは窓口 src/app/reload.ts と、利用者が押す停止画面のボタン（App.tsx・ErrorBoundary.tsx）だけ（§6.2）', () => {
+    expect(filesMatching(/location\.reload\s*\(/)).toEqual(['src/app/reload.ts', 'src/ui/App.tsx', 'src/ui/ErrorBoundary.tsx']);
   });
 
   it('予約の 3 経路（controllerchange・onNeedReload・DB の版上げ）はすべて窓口へ予約する（§6.2）', () => {

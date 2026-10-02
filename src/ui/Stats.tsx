@@ -3,6 +3,7 @@ import type { Receipt } from '../data/types';
 import { byYear, intervals, monthlyKg, predictNext } from '../domain/stats';
 import { fitFontSize } from './fit';
 import { kg, yen } from './format';
+import { placeGapLabels } from './timeline';
 
 // 集計（年の合計・月ごとの量・買う間隔）
 
@@ -16,6 +17,7 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
   const p = predictNext(props.receipts, props.today);
   const first = gaps[0]?.from;
   const span = gaps.length > 0 ? gaps.reduce((s, g) => s + g.days, 0) : 0;
+  const labels = placeGapLabels(gaps.map((g) => g.days));
   let acc = 0;
 
   return (
@@ -72,15 +74,18 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
               <div className="timeline" style={{ marginTop: 10 }} role="img" aria-label={`買う間隔: ${gaps.map((g) => `${g.days}日`).join('、')}`}>
                 <div className="rail" />
                 <div className="tick" style={{ left: '0%' }} />
-                {gaps.map((g) => {
-                  const start = acc;
+                {gaps.map((g, i) => {
                   acc += g.days;
+                  // 数字は、前の数字と重ならないときだけ線の上に置く（すべての間隔は下の一覧に出す）
+                  const { center, show } = labels[i] ?? { center: 0, show: false };
                   return (
                     <span key={g.to}>
                       <div className="tick" style={{ left: `${(acc / span) * 100}%` }} />
-                      <span className="gap num" style={{ left: `${((start + g.days / 2) / span) * 100}%`, color: g.days < 30 ? 'var(--shu)' : undefined }}>
-                        {g.days}
-                      </span>
+                      {show && (
+                        <span className="gap num" style={{ left: `${center}%`, color: g.days < 30 ? 'var(--shu)' : undefined }}>
+                          {g.days}
+                        </span>
+                      )}
                     </span>
                   );
                 })}
@@ -89,6 +94,9 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
                 <span>{first?.replaceAll('-', '.')}</span>
                 <span>{gaps.at(-1)?.to.replaceAll('-', '.')}</span>
               </div>
+              <p style={{ margin: '10px 0 0', fontSize: 13, lineHeight: 1.6 }}>
+                間隔（古い順）: <span className="num">{gaps.map((g) => g.days).join('・')}</span> 日
+              </p>
             </>
           )}
         </>

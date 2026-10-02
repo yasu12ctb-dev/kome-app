@@ -60,3 +60,40 @@ describe('validateBackup（I9）', () => {
     expect(parseBackupBytes(new Uint8Array([0xff, 0xfe]), TODAY)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 });
+
+describe('買う間隔の数字の置き方（バグ点検 P2-3）', async () => {
+  const { placeGapLabels, labelHalfWidth } = await import('../src/ui/timeline');
+  const overlaps = (days: number[]) => {
+    const ls = placeGapLabels(days)
+      .map((l, i) => ({ ...l, half: labelHalfWidth(days[i]!) }))
+      .filter((l) => l.show);
+    return ls.some((l, i) => i > 0 && l.center - l.half < ls[i - 1]!.center + ls[i - 1]!.half);
+  };
+
+  it('短い間隔が続き、1 つだけ長いときも数字が重ならない', () => {
+    for (const days of [[1, 1, 1, 1, 1, 1, 1000, 1], [30, 30, 30, 30, 30, 30, 30, 30], [1, 365], [2, 2, 2]]) {
+      expect(overlaps(days)).toBe(false);
+    }
+  });
+
+  it('十分な幅があれば数字を出す', () => {
+    expect(placeGapLabels([60, 60, 60]).every((l) => l.show)).toBe(true);
+    expect(placeGapLabels([1, 1, 1, 1, 1, 1, 1000, 1]).filter((l) => l.show)).toHaveLength(1);
+  });
+});
+
+describe('ホームの未払いの帯（バグ点検 P2-2）', async () => {
+  const { unpaidText } = await import('../src/ui/timeline');
+  const y = (n: number) => `${n.toLocaleString('ja-JP')}円`;
+  it('0 円で記録したものは「0円」と出す（金額未入力とは分ける）', () => {
+    expect(unpaidText({ count: 1, totalYen: 0, countWithoutPrice: 0 }, y)).toMatchObject({ amount: '0円', extra: null });
+  });
+  it('すべて金額未入力なら「金額未入力」', () => {
+    expect(unpaidText({ count: 2, totalYen: 0, countWithoutPrice: 2 }, y)).toMatchObject({ amount: '金額未入力', extra: null });
+  });
+  it('混在なら合計と「ほか金額未入力 N件」', () => {
+    const t = unpaidText({ count: 3, totalYen: 12000, countWithoutPrice: 1 }, y);
+    expect(t).toMatchObject({ amount: '12,000円', extra: 'ほか金額未入力 1件' });
+    expect(t.aria).toContain('ほか金額未入力 1件');
+  });
+});

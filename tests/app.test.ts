@@ -236,3 +236,12 @@ describe('大きな数字を画面幅に収める大きさ（総点検で見つ�
     expect(px * 1.86 + 102).toBeLessThanOrEqual(390);
   });
 });
+
+describe('0 時をまたいだら「今日」を更新する（バグ点検 P2-1）', () => {
+  it('次の日の 0:00:05 までの時間（日付の境目・年越し）', async () => {
+    const { msUntilNextLocalDay } = await import('../src/app/clock');
+    expect(msUntilNextLocalDay(new Date(2026, 9, 3, 23, 59, 59))).toBe(6_000);
+    expect(msUntilNextLocalDay(new Date(2026, 11, 31, 23, 0, 0))).toBe(3_605_000);
+    expect(msUntilNextLocalDay(new Date(2026, 9, 3, 0, 0, 0))).toBe(86_405_000);
+  });
+});

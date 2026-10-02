@@ -246,7 +246,7 @@ export function Settings(props: {
       >
         <span style={{ display: 'flex', flexDirection: 'column' }}>
           <span>目安の日をカレンダーに入れる</span>
-          <span className="sub" style={{ fontSize: 12 }}>{p.kind === 'ok' ? `${monthDay(p.nextDate)}・3日前に通知` : '2回記録すると使えます'}</span>
+          <span className="sub" style={{ fontSize: 12 }}>{p.kind === 'ok' ? `${monthDay(p.nextDate)}・3日前に通知` : (p.reason === 'need-two-dates' ? '2回記録すると使えます' : '目安の日を出せないため使えません')}</span>
         </span>
         <span aria-hidden="true">→</span>
       </button>

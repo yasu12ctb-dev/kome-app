@@ -7,6 +7,8 @@ import type { Receipt, Ymd } from '../data/types';
 export const PREDICTION_WINDOW = 7;
 /** 「もうすぐ」とみなす残り日数 */
 export const SOON_DAYS = 7;
+/** これより先の目安は出さない（極端な量と間隔の組み合わせで日付が扱える範囲を超えるため） */
+export const MAX_PREDICT_DAYS = 3650;
 
 // kg は 0.1 刻みなので、10 倍の整数で足して誤差を避ける
 const tenths = (kg: number) => Math.round(kg * 10);
@@ -38,6 +40,7 @@ export type PredictionState = 'ahead' | 'soon' | 'today' | 'overdue';
 
 export type Prediction =
   | { kind: 'none'; reason: 'need-two-dates'; datesNeeded: number }
+  | { kind: 'none'; reason: 'out-of-range' }
   | {
       kind: 'ok';
       nextDate: Ymd;
@@ -57,7 +60,9 @@ export function predictNext(receipts: readonly Receipt[], today: Ymd): Predictio
   const span = daysBetween(first.date, last.date);
   const consumedTenths = days.slice(0, -1).reduce((sum, d) => sum + tenths(d.kg), 0);
   const kgPerDay = consumedTenths / 10 / span;
-  const nextDate = addDays(last.date, Math.round(last.kg / kgPerDay));
+  const ahead = Math.round(last.kg / kgPerDay);
+  if (!Number.isFinite(ahead) || ahead > MAX_PREDICT_DAYS) return { kind: 'none', reason: 'out-of-range' };
+  const nextDate = addDays(last.date, ahead);
   const daysUntil = daysBetween(today, nextDate);
   const state: PredictionState = daysUntil < 0 ? 'overdue' : daysUntil === 0 ? 'today' : daysUntil <= SOON_DAYS ? 'soon' : 'ahead';
   return { kind: 'ok', nextDate, daysUntil, state, avgIntervalDays: span / (days.length - 1), kgPerDay };

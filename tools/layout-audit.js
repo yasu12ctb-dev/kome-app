@@ -1,6 +1,7 @@
 // 表示の総点検（開発サーバー専用）。状態ごとに試験データを入れ、アプリを複数の画面幅の iframe で開いて、
-// 全画面のはみ出しを測る。使い方: /kome-app/tools/audit.html を開き、
-//   const m = await import('/kome-app/tools/layout-audit.js'); await m.run()
+// 全画面のはみ出し・文字同士の重なり・欄の中で切れた文字を測る。使い方: /kome-app/tools/audit.html を開き、
+//   const m = await import('/kome-app/tools/layout-audit.js'); await m.run()   （1 回 45 秒に収めるなら run(['over3']) のように分ける）
+// ダークの点検は、ブラウザ側で prefers-color-scheme: dark にしてから同じく run() する
 
 const DAY = 86_400_000;
 function ymd(offsetDays) {
@@ -21,9 +22,43 @@ export const SCENARIOS = {
   over4: [[-3000, 30, 12000, true], [-2990, 30, 12000, true]],
   many: Array.from({ length: 120 }, (_, i) => [-(i * 30 + 1), 30, 999999, false]),
   heavy: [[-60, 999.9, 9999999, false], [-30, 999.9, 9999999, false], [-1, 0.1, null, false]],
+  unpaidZero: [[-40, 30, 12000, true], [-10, 30, 0, false]],
+  unpaidMixed: [[-70, 30, 12000, false], [-40, 30, 12000, false], [-10, 30, null, false]],
+  unpaidMissing: [[-40, 30, null, false], [-10, 30, null, false]],
+  sameDay: [[-5, 30, 12000, true], [-5, 30, 12000, true]],
+  skewed: gapsToRows([1, 1, 1, 1, 1, 1, 1000, 1]),
+  outOfRange: [[daysFromToday('2020-01-01'), 0.1, null, true], [0, 1000, null, true]],
+  // 長い保存先の名前と、保存を止めているエラーの帯（meta を直接書く。アプリの経路は通らない）
+  errorBanner: {
+    rows: [[-40, 30, 12000, true], [-10, 30, 12000, true]],
+    lineage: {
+      config: { owner: 'a-very-long-github-owner-name-x', repo: 'a-very-long-repository-name-for-kome-backup-data', branch: 'main', path: 'kome-backup.json' },
+      errorKind: 'conflict',
+      lastErrorMessage: 'GitHub に、この端末が送っていないデータがあります（409 Conflict: is at 0123456789abcdef0123456789abcdef01234567 but expected fedcba9876543210）',
+    },
+  },
 };
 
-const ROUTES = ['', 'records', 'records?unpaid', 'stats', 'settings', 'add', 'edit'];
+function daysFromToday(isoYmd) {
+  const [y, m, d] = isoYmd.split('-').map(Number);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((new Date(y, m - 1, d) - today) / DAY);
+}
+
+/** 古い順の間隔（日）から、最後の受け取りを 1 日前とする記録を作る */
+function gapsToRows(gaps) {
+  let off = -1 - gaps.reduce((a, b) => a + b, 0);
+  const rows = [[off, 30, 12000, true]];
+  for (const g of gaps) {
+    off += g;
+    rows.push([off, 30, 12000, true]);
+  }
+  return rows;
+}
+
+// edit-delete は編集画面で「この記録を削除」を押した確認の画面
+const ROUTES = ['', 'records', 'records?unpaid', 'stats', 'settings', 'add', 'edit', 'edit-delete'];
 const WIDTHS = [375, 390, 430];
 
 async function deleteDb() {
@@ -33,7 +68,25 @@ async function deleteDb() {
   });
 }
 
-async function seed(rows) {
+function idbDone(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function patchLineage(patch) {
+  const db = await idbDone(indexedDB.open('kome'));
+  const tx = db.transaction('meta', 'readwrite');
+  const store = tx.objectStore('meta');
+  const cur = await idbDone(store.get('backup'));
+  store.put({ ...cur, ...patch }, 'backup');
+  await new Promise((r) => (tx.oncomplete = r));
+  db.close();
+}
+
+async function seed(scenario) {
+  const rows = Array.isArray(scenario) ? scenario : scenario.rows;
   await deleteDb();
   const { openRepo } = await import('/src/data/repo.ts');
   const r = await openRepo({});
@@ -45,7 +98,66 @@ async function seed(rows) {
     ids.push(x.receipt.id);
   }
   r.repo.close();
+  if (!Array.isArray(scenario) && scenario.lineage) await patchLineage(scenario.lineage);
   return ids;
+}
+
+const HIDDEN = '.visually-hidden, .kg-mirror, [aria-hidden="true"] .bag';
+
+function visibleText(doc) {
+  // 見えている文字のかたまり（テキストノード単位）の矩形
+  // 確認の画面が開いていれば、その下の画面は隠れているので確認の画面の中だけを見る
+  const dialogs = doc.querySelectorAll('#root [role="dialog"]');
+  const scope = dialogs.length > 0 ? dialogs[dialogs.length - 1] : doc.getElementById('root');
+  const out = [];
+  const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n.textContent.trim();
+    const el = n.parentElement;
+    if (!t || !el || el.closest(HIDDEN)) continue;
+    const cs = doc.defaultView.getComputedStyle(el);
+    if (cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue;
+    const range = doc.createRange();
+    range.selectNodeContents(n);
+    // 文字の外枠（行の高さ）は字形より上下に大きいので、字の大きさの 74% を字形の高さとして縦を詰める
+    const ink = 0.74 * parseFloat(cs.fontSize);
+    for (const b of range.getClientRects()) {
+      if (b.width === 0 || b.height === 0) continue;
+      const cy = (b.top + b.bottom) / 2;
+      const h = Math.min(b.height, ink);
+      out.push({ r: { left: b.left, right: b.right, top: cy - h / 2, bottom: cy + h / 2, height: h }, t: t.slice(0, 16), el });
+    }
+  }
+  return out;
+}
+
+function overlaps(doc) {
+  const items = visibleText(doc);
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i].r;
+      const b = items[j].r;
+      const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (w > 2 && h > 2) out.push(`文字が重なる「${items[i].t}」と「${items[j].t}」`);
+    }
+  }
+  return out;
+}
+
+function clipped(doc) {
+  // はみ出しを隠す箱の中で、文字が切れている
+  const out = [];
+  for (const el of doc.querySelectorAll('#root *')) {
+    if (el.closest(HIDDEN) || !el.textContent.trim()) continue;
+    const cs = doc.defaultView.getComputedStyle(el);
+    const hides = ['hidden', 'clip'].includes(cs.overflowX) || ['hidden', 'clip'].includes(cs.overflowY);
+    if (!hides) continue;
+    if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)
+      out.push(`箱の中で文字が切れる ${el.scrollWidth}x${el.scrollHeight}>${el.clientWidth}x${el.clientHeight} ${el.tagName.toLowerCase()}.${el.className}「${el.textContent.trim().slice(0, 20)}」`);
+  }
+  return out;
 }
 
 function overflow(win) {
@@ -62,18 +174,44 @@ function overflow(win) {
     if (r.left < -1 && !el.classList.contains('banner')) out.push(`左へはみ出し ${Math.round(-r.left)}px ${label}`);
     if ((el.tagName === 'INPUT') && el.scrollWidth > el.clientWidth + 1) out.push(`入力欄の中身が欠ける ${el.scrollWidth}>${el.clientWidth} ${label}`);
   }
-  return [...new Set(out)];
+  return [...new Set([...out, ...overlaps(doc), ...clipped(doc)])];
+}
+
+async function waitReady(win, route) {
+  // 固定の待ち時間ではなく、画面の中身が出たことを確かめる（最大 4 秒）
+  const want = route === 'add' || route.startsWith('edit') ? 'main:not([aria-busy]) input' : 'main:not([aria-busy]) h1, main:not([aria-busy]) .num';
+  for (let i = 0; i < 80; i++) {
+    const doc = win.document;
+    const root = doc.getElementById('root');
+    if (root && root.querySelector(want) && doc.fonts.status === 'loaded') {
+      // 表示枠が隠れていると描画の合図が来ないので、時間でも抜ける
+      await Promise.race([new Promise((r) => win.requestAnimationFrame(() => win.requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 150))]);
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
 }
 
 async function open(route, width, editId) {
   const frame = document.createElement('iframe');
   frame.style.cssText = `width:${width}px;height:844px;border:1px solid #999`;
-  const hash = route === 'edit' ? `edit/${editId}` : route;
+  const hash = route.startsWith('edit') ? `edit/${editId}` : route;
   frame.src = `/kome-app/#${hash}`;
   document.body.append(frame);
   await new Promise((r) => (frame.onload = r));
-  await new Promise((r) => setTimeout(r, 600));
-  const result = overflow(frame.contentWindow);
+  const win = frame.contentWindow;
+  const ready = await waitReady(win, route);
+  if (ready && route === 'edit-delete') {
+    const btn = [...win.document.querySelectorAll('button')].find((b) => b.textContent.includes('この記録を削除'));
+    btn?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    if (!win.document.querySelector('[role="dialog"]')) {
+      frame.remove();
+      return { result: ['削除の確認が開かない'], text: '' };
+    }
+  }
+  const result = ready ? overflow(win) : ['画面の読み込みが終わらない'];
   const text = frame.contentDocument.body.innerText.replace(/\s+/g, ' ').slice(0, 80);
   frame.remove();
   await new Promise((r) => setTimeout(r, 50));
@@ -86,7 +224,7 @@ export async function run(only) {
     if (only && !only.includes(name)) continue;
     const ids = await seed(rows);
     for (const route of ROUTES) {
-      if (route === 'edit' && ids.length === 0) continue;
+      if (route.startsWith('edit') && ids.length === 0) continue;
       for (const w of WIDTHS) {
         const { result, text } = await open(route, w, ids[0]);
         if (result.length) report.push({ scenario: name, route: route || 'home', width: w, problems: result.slice(0, 6), text });
@@ -96,3 +234,6 @@ export async function run(only) {
   await deleteDb();
   return report;
 }
+
+// 検出の自己確認用（わざと崩した画面を測る）
+export { overflow as measure, seed };

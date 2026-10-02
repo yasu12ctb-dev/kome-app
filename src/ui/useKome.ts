@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createChangeChannel, type ChangeChannel } from '../app/channel';
 import { attachPushTriggers, createPushScheduler, type PushScheduler } from '../app/scheduler';
 import type { ReloadCoordinator } from '../app/reload';
+import { msUntilNextLocalDay } from '../app/clock';
 import type { LineageGate } from '../backup/lineage';
 import { createBackupService, type BackupService, type ConfirmResult, type PreviewResult, type RestorePreview } from '../backup/service';
 import { toLocalYmd } from '../data/date';
@@ -108,7 +109,17 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
         if (document.visibilityState === 'visible') void refresh();
       };
       document.addEventListener('visibilitychange', onVisible);
+      // 開いたまま日付が変わったら「今日」を更新する（0 時を少し過ぎた時点で読み直す）
+      let midnightTimer: ReturnType<typeof setTimeout> | null = null;
+      const scheduleMidnight = () => {
+        midnightTimer = setTimeout(() => {
+          void refresh();
+          scheduleMidnight();
+        }, msUntilNextLocalDay(new Date()));
+      };
+      scheduleMidnight();
       detach = () => {
+        if (midnightTimer !== null) clearTimeout(midnightTimer);
         detachTriggers();
         document.removeEventListener('visibilitychange', onVisible);
       };

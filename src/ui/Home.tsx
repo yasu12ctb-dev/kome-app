@@ -6,6 +6,7 @@ import { lastReceiptDate, predictNext, totalKg, unpaid, type Prediction } from '
 import { kg, monthDay, monthDayWeek, yen } from './format';
 import { fitFontSize } from './fit';
 import { Bag, BagOutline } from './icons';
+import { unpaidText } from './timeline';
 
 const STATUS_TEXT = { unset: 'バックアップ未設定', saved: '保存済み', pending: '保存待ち', error: '保存が止まっています' } as const;
 
@@ -119,6 +120,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
   const elapsed = daysBetween(last, today);
   const total = totalKg(receipts);
   const due = unpaid(receipts);
+  const dueText = unpaidText(due, yen);
   const bagCount = receipts.length;
 
   let lead: string;
@@ -132,7 +134,11 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
         —
       </span>
     );
-    when = <div style={{ marginTop: 18, fontSize: 22, fontWeight: 800, lineHeight: 1.5 }}>あと{p.datesNeeded}回記録すると、目安の日が出ます</div>;
+    when = (
+      <div style={{ marginTop: 18, fontSize: 22, fontWeight: 800, lineHeight: 1.5 }}>
+        {p.reason === 'need-two-dates' ? `あと${p.datesNeeded}回記録すると、目安の日が出ます` : '受け取りの間隔と量の差が大きすぎて、目安の日を出せません'}
+      </div>
+    );
     track = (
       <div className="track">
         <div className="dotted" />
@@ -226,9 +232,10 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
           </span>
         </div>
         {due.count > 0 && (
-          <a href="#records?unpaid" className="tag" aria-label={`未払い ${due.count}件 ${yen(due.totalYen)}`}>
+          <a href="#records?unpaid" className="tag" aria-label={dueText.aria}>
             <span className="t1">未払い {due.count}件</span>
-            <span className="t2 num">{due.totalYen > 0 ? yen(due.totalYen) : '金額なし'}</span>
+            <span className="t2 num">{dueText.amount}</span>
+            {dueText.extra && <span className="t1">{dueText.extra}</span>}
           </a>
         )}
       </div>

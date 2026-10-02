@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { RestorePreview } from '../backup/service';
+import { fitFontSize } from './fit';
 import { kg } from './format';
 
 // 復元の確認（§6.1 手順 2・3）と、GitHub との食い違い（§4.3）
@@ -24,7 +25,7 @@ export function RestoreDialog(props: { preview: RestorePreview; onConfirm: () =>
       <div className="compare">
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>この端末</span>
-          <span className="num count" style={{ color: 'var(--line)' }}>
+          <span className="num count" style={{ color: 'var(--line)', fontSize: fitFontSize(String(preview.local.count), 110, 32 + 40 + 200) }}>
             {preview.local.count}
           </span>
           <span className="sub" style={{ fontSize: 14, marginTop: 6 }}>
@@ -36,7 +37,9 @@ export function RestoreDialog(props: { preview: RestorePreview; onConfirm: () =>
         </span>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>バックアップ</span>
-          <span className="num count">{preview.backup.count}</span>
+          <span className="num count" style={{ fontSize: fitFontSize(String(preview.backup.count), 110, 32 + 40 + 200) }}>
+            {preview.backup.count}
+          </span>
           <span style={{ fontSize: 14, marginTop: 6 }}>
             件・{kg(preview.backup.totalKg)} kg・最後 {shortDate(preview.backup.lastDate)}
           </span>
