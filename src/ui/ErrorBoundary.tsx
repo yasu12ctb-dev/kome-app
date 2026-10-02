@@ -16,7 +16,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   override render() {
     if (!this.state.error) return this.props.children;
     return (
-      <main className="screen">
+      <main className="screen" data-screen="error">
         <div style={{ height: 44 }} />
         <h1 style={{ fontSize: 28, fontWeight: 900, lineHeight: 1.35 }}>画面を表示できませんでした</h1>
         <p className="sub" style={{ lineHeight: 1.7 }}>記録には触れていません。開き直してください。続くときは、この画面を撮って知らせてください。</p>

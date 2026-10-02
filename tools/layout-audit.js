@@ -177,23 +177,41 @@ function overflow(win) {
   return [...new Set([...out, ...overlaps(doc), ...clipped(doc)])];
 }
 
-async function waitReady(win, route) {
-  // 固定の待ち時間ではなく、画面の中身が出たことを確かめる（最大 4 秒）
-  const want = route === 'add' || route.startsWith('edit') ? 'main:not([aria-busy]) input' : 'main:not([aria-busy]) h1, main:not([aria-busy]) .num';
-  for (let i = 0; i < 80; i++) {
-    const doc = win.document;
-    const root = doc.getElementById('root');
-    if (root && root.querySelector(want) && doc.fonts.status === 'loaded') {
-      // 表示枠が隠れていると描画の合図が来ないので、時間でも抜ける
-      await Promise.race([new Promise((r) => win.requestAnimationFrame(() => win.requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 150))]);
-      return true;
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  return false;
+// 画面ごとの目印（各画面の main の data-screen）。停止画面（stopped）・例外の画面（error）は、通常の点検では失敗とする
+const SCREEN_OF_ROUTE = { '': 'home', records: 'records', 'records?unpaid': 'records-unpaid', stats: 'stats', settings: 'settings', add: 'add', edit: 'edit', 'edit-delete': 'edit' };
+
+/** 期待した画面が出ていれば null、まだなら 'wait'、別の画面（停止・例外を含む）なら理由の文字列 */
+export function screenState(doc, route, expect = {}) {
+  const main = doc.querySelector('#root main[data-screen]');
+  if (!main) return 'wait';
+  const screen = main.getAttribute('data-screen');
+  if (screen === 'loading') return 'wait';
+  if (screen === 'error' || screen === 'stopped') return `通常の画面でなく${screen === 'error' ? '例外の画面' : '停止画面'}が出た「${(main.querySelector('h1')?.textContent ?? '').trim().slice(0, 30)}」`;
+  const want = SCREEN_OF_ROUTE[route] ?? 'home';
+  if (screen !== want) return `期待した画面（${want}）でなく ${screen} が出た`;
+  // 期待するデータが画面に出ているか（シナリオの合計量など）
+  for (const t of expect.texts ?? []) if (!main.textContent.includes(t)) return `期待した表示「${t}」が無い`;
+  return null;
 }
 
-async function open(route, width, editId) {
+async function waitReady(win, route, expect) {
+  // 固定の待ち時間ではなく、期待した画面とデータが出たことを確かめる（最大 4 秒）
+  let last = 'wait';
+  for (let i = 0; i < 80; i++) {
+    const doc = win.document;
+    last = screenState(doc, route, expect);
+    if (last === null && doc.fonts.status === 'loaded') {
+      // 表示枠が隠れていると描画の合図が来ないので、時間でも抜ける
+      await Promise.race([new Promise((r) => win.requestAnimationFrame(() => win.requestAnimationFrame(r))), new Promise((r) => setTimeout(r, 150))]);
+      return null;
+    }
+    if (last !== null && last !== 'wait') return last;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return last === 'wait' ? '画面の読み込みが終わらない' : last;
+}
+
+async function open(route, width, editId, expect) {
   const frame = document.createElement('iframe');
   frame.style.cssText = `width:${width}px;height:844px;border:1px solid #999`;
   const hash = route.startsWith('edit') ? `edit/${editId}` : route;
@@ -201,8 +219,8 @@ async function open(route, width, editId) {
   document.body.append(frame);
   await new Promise((r) => (frame.onload = r));
   const win = frame.contentWindow;
-  const ready = await waitReady(win, route);
-  if (ready && route === 'edit-delete') {
+  const notReady = await waitReady(win, route, expect);
+  if (!notReady && route === 'edit-delete') {
     const btn = [...win.document.querySelectorAll('button')].find((b) => b.textContent.includes('この記録を削除'));
     btn?.click();
     await new Promise((r) => setTimeout(r, 100));
@@ -211,11 +229,21 @@ async function open(route, width, editId) {
       return { result: ['削除の確認が開かない'], text: '' };
     }
   }
-  const result = ready ? overflow(win) : ['画面の読み込みが終わらない'];
+  const result = notReady ? [notReady] : overflow(win);
   const text = frame.contentDocument.body.innerText.replace(/\s+/g, ' ').slice(0, 80);
   frame.remove();
   await new Promise((r) => setTimeout(r, 50));
   return { result, text };
+}
+
+/** シナリオから、画面に出ているはずの値（ホームの合計量・集計の年の合計）を作る */
+function expectFor(scenario, route) {
+  const rows = Array.isArray(scenario) ? scenario : scenario.rows;
+  if (rows.length === 0) return {};
+  const total = rows.reduce((s, r) => s + Math.round(r[1] * 10), 0) / 10;
+  const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1)); // src/ui/format.ts の kg と同じ
+  if (route === '') return { texts: [fmt(total)] };
+  return {};
 }
 
 export async function run(only) {
@@ -226,7 +254,7 @@ export async function run(only) {
     for (const route of ROUTES) {
       if (route.startsWith('edit') && ids.length === 0) continue;
       for (const w of WIDTHS) {
-        const { result, text } = await open(route, w, ids[0]);
+        const { result, text } = await open(route, w, ids[0], expectFor(rows, route));
         if (result.length) report.push({ scenario: name, route: route || 'home', width: w, problems: result.slice(0, 6), text });
       }
     }

@@ -21,7 +21,7 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
   let acc = 0;
 
   return (
-    <main className="screen">
+    <main className="screen" data-screen="stats">
       <a href="#" className="back">
         ← ホーム
       </a>

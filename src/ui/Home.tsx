@@ -84,7 +84,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
 
   if (receipts.length === 0) {
     return (
-      <main className="screen" ref={mainRef}>
+      <main className="screen" data-screen="home" ref={mainRef}>
         {banner}
         <div className="topbar">
           <span className="label">お米の記録</span>
@@ -198,7 +198,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
   }
 
   return (
-    <main className={`screen poster ${stateClass(p)}`} ref={mainRef}>
+    <main className={`screen poster ${stateClass(p)}`} data-screen="home" ref={mainRef}>
       {banner}
       <div className="topbar">
         <span className="label">次の目安まで</span>

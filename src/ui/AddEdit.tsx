@@ -73,7 +73,7 @@ export function AddEdit(props: {
   }
 
   return (
-    <main className="screen" data-dirty={dirty ? 'true' : 'false'}>
+    <main className="screen" data-screen={props.editing ? 'edit' : 'add'} data-dirty={dirty ? 'true' : 'false'}>
       <div className="topbar">
         <button type="button" className="back" onClick={props.onDone}>
           やめる

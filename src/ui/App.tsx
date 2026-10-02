@@ -40,14 +40,14 @@ export function App(props: { coordinator?: ReloadCoordinator } = {}) {
   const [preview, setPreview] = useState<RestorePreview | null>(null);
   const [conflict, setConflict] = useState(false);
 
-  if (state.kind === 'loading') return <main className="screen" aria-busy="true" />;
+  if (state.kind === 'loading') return <main className="screen" data-screen="loading" aria-busy="true" />;
   if (state.kind === 'stopped') {
     const message =
       state.reason === 'open-failed'
         ? 'データを開けませんでした。アプリを開き直してください。'
         : '新しい版のアプリで作られたデータです。アプリを更新してください。';
     return (
-      <main className="screen">
+      <main className="screen" data-screen="stopped">
         <div style={{ height: 44 }} />
         <h1 style={{ fontSize: 30, fontWeight: 900, lineHeight: 1.35 }}>{message}</h1>
         <p className="sub">記録には触れていません。</p>

@@ -111,7 +111,7 @@ export function Settings(props: {
   }
 
   return (
-    <main className="screen" data-dirty={dirty ? 'true' : 'false'}>
+    <main className="screen" data-screen="settings" data-dirty={dirty ? 'true' : 'false'}>
       <a href="#" className="back">
         ← ホーム
       </a>

@@ -12,7 +12,7 @@ export function Records(props: { receipts: Receipt[]; onlyUnpaid: boolean }) {
     byYear.set(y, [...(byYear.get(y) ?? []), r]);
   }
   return (
-    <main className="screen">
+    <main className="screen" data-screen={props.onlyUnpaid ? 'records-unpaid' : 'records'}>
       <a href="#" className="back">
         ← ホーム
       </a>
