@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Receipt } from '../data/types';
 import { byYear, intervals, monthlyKg, predictNext } from '../domain/stats';
+import { fitFontSize } from './fit';
 import { kg, yen } from './format';
 
 // 集計（年の合計・月ごとの量・買う間隔）
@@ -30,7 +31,7 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 4 }}>
-            <span className="num" style={{ fontSize: 96, lineHeight: 0.9, letterSpacing: '-0.04em' }}>
+            <span className="num" style={{ fontSize: fitFontSize(kg(current?.kg ?? 0), 96, 32 + 70), lineHeight: 0.9, letterSpacing: '-0.04em' }}>
               {kg(current?.kg ?? 0)}
             </span>
             <span style={{ fontSize: 24, fontWeight: 800 }}>kg</span>

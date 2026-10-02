@@ -1,9 +1,10 @@
 import { daysBetween } from '../data/date';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import type { Lineage, Receipt, Ymd } from '../data/types';
 import { displayStatus } from '../backup/lineage';
 import { lastReceiptDate, predictNext, totalKg, unpaid, type Prediction } from '../domain/stats';
 import { kg, monthDay, monthDayWeek, yen } from './format';
+import { fitFontSize } from './fit';
 import { Bag, BagOutline } from './icons';
 
 const STATUS_TEXT = { unset: 'バックアップ未設定', saved: '保存済み', pending: '保存待ち', error: '保存が止まっています' } as const;
@@ -30,8 +31,28 @@ function stateClass(p: Prediction): string {
   return '';
 }
 
+/** 大きく過ぎていたら、記録し忘れの可能性を添える日数 */
+const FORGOT_HINT_DAYS = 14;
+
+/** 画面上端（時刻の帯）の色を、画面の地の色に合わせる（theme-color） */
+function useThemeColorFrom(ref: RefObject<HTMLElement | null>, key: string) {
+  useLayoutEffect(() => {
+    const metas = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+    const before = metas.map((m) => m.content);
+    const el = ref.current;
+    if (el) {
+      const color = getComputedStyle(el).backgroundColor;
+      for (const m of metas) m.content = color;
+    }
+    return () => metas.forEach((m, i) => (m.content = before[i]!));
+  }, [ref, key]);
+}
+
 export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevision: number; today: Ymd; standalone: boolean; onConflict: () => void }) {
   const { receipts, lineage, today } = props;
+  const mainRef = useRef<HTMLElement | null>(null);
+  const themeKey = receipts.length === 0 ? 'empty' : stateClass(predictNext(receipts, today));
+  useThemeColorFrom(mainRef, themeKey);
   const status = displayStatus(lineage, props.dataRevision);
   const stop = stopMessage(lineage);
   const chip = (
@@ -62,7 +83,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
 
   if (receipts.length === 0) {
     return (
-      <main className="screen">
+      <main className="screen" ref={mainRef}>
         {banner}
         <div className="topbar">
           <span className="label">お米の記録</span>
@@ -125,19 +146,36 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
       big = <span className="word">今日</span>;
       when = <div className="when mincho">{monthDayWeek(p.nextDate)}　注文の目安</div>;
     } else if (p.state === 'overdue') {
-      lead = '目安を過ぎて';
+      const over = String(-p.daysUntil);
+      lead = '目安から';
       big = (
         <>
-          <span className="num n">+{-p.daysUntil}</span>
-          <span className="unit">日</span>
+          <span className="num n" style={{ fontSize: fitFontSize(over, 250, 32 + 150) }}>
+            {over}
+          </span>
+          <span className="unit" style={{ fontSize: 40 }}>
+            日過ぎ
+          </span>
         </>
       );
-      when = <div className="when mincho">目安は{monthDayWeek(p.nextDate)}でした</div>;
+      when = (
+        <>
+          <div className="when mincho">目安は{monthDayWeek(p.nextDate)}でした</div>
+          {-p.daysUntil >= FORGOT_HINT_DAYS && (
+            <p style={{ margin: '10px 0 0', fontSize: 14, lineHeight: 1.6, color: 'var(--sub)' }}>
+              受け取ったのに記録していなければ、下の「お米を受け取った」から記録してください。
+            </p>
+          )}
+        </>
+      );
     } else {
       lead = p.state === 'soon' ? 'もうすぐ' : 'あと';
+      const days = String(p.daysUntil);
       big = (
         <>
-          <span className="num n">{p.daysUntil}</span>
+          <span className="num n" style={{ fontSize: fitFontSize(days, 250, 32 + 70) }}>
+            {days}
+          </span>
           <span className="unit">日</span>
         </>
       );
@@ -154,7 +192,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
   }
 
   return (
-    <main className={`screen poster ${stateClass(p)}`}>
+    <main className={`screen poster ${stateClass(p)}`} ref={mainRef}>
       {banner}
       <div className="topbar">
         <span className="label">次の目安まで</span>

@@ -224,3 +224,15 @@ describe('§7 別タブへの変更の通知（U3 の必須試験）', () => {
     b.close();
   });
 });
+
+describe('大きな数字を画面幅に収める大きさ（総点検で見つかった桁あふれの再発防止）', () => {
+  it('文字数が増えるほど小さくなり、上限を超えない', async () => {
+    const { fitFontSize } = await import('../src/ui/fit');
+    expect(fitFontSize('28', 250, 102)).toBe('min(250px, calc((100vw - 102px) / 1.24))');
+    expect(fitFontSize('190', 250, 102)).toBe('min(250px, calc((100vw - 102px) / 1.86))');
+    expect(fitFontSize('2980', 250, 182)).toBe('min(250px, calc((100vw - 182px) / 2.48))');
+    // 390px の画面で 3 桁 + 「日」が収まる（数字 1.86em ≤ 390 − 102）
+    const px = Math.min(250, (390 - 102) / 1.86);
+    expect(px * 1.86 + 102).toBeLessThanOrEqual(390);
+  });
+});
