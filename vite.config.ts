@@ -30,8 +30,8 @@ export default defineConfig({
       injectRegister: null,
       includeAssets: ['icons/apple-touch-icon-180.png'],
       manifest: {
-        name: 'お米の記録',
-        short_name: 'お米',
+        name: 'こめログ',
+        short_name: 'こめログ',
         lang: 'ja',
         start_url: './',
         scope: './',

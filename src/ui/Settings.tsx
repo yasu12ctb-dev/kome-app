@@ -285,7 +285,7 @@ export function Settings(props: {
       <div className="about">
         <img src={`${import.meta.env.BASE_URL}icons/icon-192.png`} alt="" />
         <span style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
-          <span style={{ fontSize: 15, fontWeight: 800 }}>お米の記録</span>
+          <span style={{ fontSize: 15, fontWeight: 800 }}>こめログ</span>
           <span className="sub" style={{ fontSize: 12 }}>
             バージョン
           </span>

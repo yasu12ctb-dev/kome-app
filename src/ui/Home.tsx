@@ -87,7 +87,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
       <main className="screen" data-screen="home" ref={mainRef}>
         {banner}
         <div className="topbar">
-          <span className="label">お米の記録</span>
+          <span className="label">こめログ</span>
           {chip}
         </div>
         {installHint}
