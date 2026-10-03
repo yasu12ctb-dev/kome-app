@@ -323,6 +323,34 @@ describe('保存先・鍵の変更', () => {
     expect(gh.requests.at(-1)!.headers.Authorization).toBe('Bearer github_pat_NEW');
   });
 
+  it('同じ保存先の設定を保存し直すと invalid も解ける（設計書 §4.0・最終点検 9af66027 P2-2）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo);
+    gh.hooks.onRequest = (req) => (req.method === 'PUT' ? new Response('{}', { status: 422 }) : undefined);
+    expect(await d.service.push()).toMatchObject({ errorKind: 'invalid' });
+    gh.hooks.onRequest = undefined;
+    expect(await d.service.push()).toEqual({ kind: 'skipped', reason: 'stopped' });
+    const before = await state(d.gate);
+    await d.service.saveConfig(TARGET);
+    const after = await state(d.gate);
+    expect(after.generation).toBe(before.generation);
+    expect(after.errorKind).toBeNull();
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+  });
+
+  it('同じ保存先の設定の保存では conflict は解けない（衝突の解決か復元で解く）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo);
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    gh.setRemote(KEY, JSON.stringify({ other: true }));
+    await add(d.repo, '2026-09-21');
+    expect(await d.service.push()).toMatchObject({ errorKind: 'conflict' });
+    await d.service.saveConfig(TARGET);
+    expect((await state(d.gate)).errorKind).toBe('conflict');
+  });
+
   it('「今すぐ保存」は止める種類のエラーを消して送る', async () => {
     const gh = fakeGitHub();
     const d = await device(gh);

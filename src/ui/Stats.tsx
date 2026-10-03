@@ -3,13 +3,15 @@ import type { Receipt } from '../data/types';
 import { byYear, intervals, monthlyKg, predictNext } from '../domain/stats';
 import { fitFontSize } from './fit';
 import { kg, yen } from './format';
-import { placeGapLabels } from './timeline';
+import { placeGapLabels, yenTotalText } from './timeline';
 
 // 集計（年の合計・月ごとの量・買う間隔）
 
 export function Stats(props: { receipts: Receipt[]; today: string }) {
   const years = byYear(props.receipts);
-  const [year, setYear] = useState<number>(years[0]?.year ?? Number(props.today.slice(0, 4)));
+  const [picked, setYear] = useState<number>(years[0]?.year ?? Number(props.today.slice(0, 4)));
+  // 選んでいた年の記録が（別のタブでの削除・日付の変更で）無くなったら、いちばん新しい年を出す
+  const year = years.some((y) => y.year === picked) ? picked : (years[0]?.year ?? Number(props.today.slice(0, 4)));
   const current = years.find((y) => y.year === year);
   const months = monthlyKg(props.receipts, year);
   const maxMonth = Math.max(30, ...months);
@@ -39,7 +41,7 @@ export function Stats(props: { receipts: Receipt[]; today: string }) {
             <span style={{ fontSize: 24, fontWeight: 800 }}>kg</span>
           </div>
           <div style={{ marginTop: 8, fontSize: 16, fontWeight: 700 }}>
-            {year}年　{current?.count ?? 0}回・{yen(current?.yen ?? 0)}
+            {year}年　{current?.count ?? 0}回・{yenTotalText(current?.yen ?? 0, current?.count ?? 0, current?.countWithoutPrice ?? 0, yen)}
           </div>
           {years.length > 1 && (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>

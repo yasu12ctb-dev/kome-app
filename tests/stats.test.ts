@@ -26,8 +26,8 @@ describe('サンプルデータ 8 件（docs/ui-brief.md）', () => {
     expect(unpaid(SAMPLE)).toEqual({ count: 1, totalYen: 13000, countWithoutPrice: 0 });
     expect(SAMPLE.map(unitPriceYen)).toEqual([400, 400, 400, 417, 417, 417, 433, 433]);
     expect(byYear(SAMPLE)).toEqual([
-      { year: 2026, count: 7, kg: 210, yen: 87500 },
-      { year: 2025, count: 1, kg: 30, yen: 12000 },
+      { year: 2026, count: 7, kg: 210, yen: 87500, countWithoutPrice: 0 },
+      { year: 2025, count: 1, kg: 30, yen: 12000, countWithoutPrice: 0 },
     ]);
     expect(monthlyKg(SAMPLE, 2026)).toEqual([30, 0, 30, 30, 0, 30, 30, 30, 30, 0, 0, 0]);
     expect(intervals(SAMPLE).map((i) => i.days)).toEqual([42, 42, 42, 42, 42, 42, 22]);

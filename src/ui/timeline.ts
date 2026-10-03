@@ -26,6 +26,12 @@ export function placeGapLabels(days: readonly number[]): GapLabel[] {
   });
 }
 
+/** 代金の合計の文字。代金の無い記録を 0 円として見せない（全件なければ「金額未入力」、混ざれば件数を添える） */
+export function yenTotalText(totalYen: number, count: number, countWithoutPrice: number, yen: (n: number) => string): string {
+  if (count > 0 && countWithoutPrice === count) return '金額未入力';
+  return countWithoutPrice > 0 ? `${yen(totalYen)}（ほか金額未入力 ${countWithoutPrice}件）` : yen(totalYen);
+}
+
 /** ホームの未払いの帯に出す文字（0 円は「0 円」、金額のないものは件数を分けて出す） */
 export function unpaidText(due: { count: number; totalYen: number; countWithoutPrice: number }, yen: (n: number) => string) {
   const allMissing = due.countWithoutPrice === due.count;

@@ -9,6 +9,8 @@ import type { Lineage } from '../src/data/types';
 import { AddEdit } from '../src/ui/AddEdit';
 import { App } from '../src/ui/App';
 import { Settings } from '../src/ui/Settings';
+import { Stats } from '../src/ui/Stats';
+import { receipt, uuid } from './helpers';
 import type { KomeActions } from '../src/ui/useKome';
 
 // 不変条件を担う画面と接続部分を、実際の部品で確かめる（U3 実装検収の回答）
@@ -203,5 +205,17 @@ describe('§6.2 db-upgrade の流れ（U3 実装検収 P2-2・再検収 P2-1）'
     await act(async () => new Promise((r) => setTimeout(r, 20)));
     expect(reload).toHaveBeenCalledTimes(1);
     (await other).close();
+  });
+});
+
+describe('集計で選んでいた年の記録が無くなったとき（最終点検 9af66027 P2-1）', () => {
+  it('別のタブで 2026 年の記録が消えて 2025 年だけになったら、2025 年を出す', async () => {
+    const r2025 = receipt({ id: uuid(31), date: '2025-11-01', kg: 30, priceYen: 12000 });
+    const r2026 = receipt({ id: uuid(32), date: '2026-03-01', kg: 30, priceYen: 12000 });
+    await render(<Stats receipts={[r2025, r2026]} today="2026-10-04" />);
+    expect(host.textContent).toContain('2026年　1回');
+    await act(async () => root!.render(<Stats receipts={[r2025]} today="2026-10-04" />));
+    expect(host.textContent).toContain('2025年　1回・12,000円');
+    expect(host.textContent).not.toContain('2026年　0回');
   });
 });

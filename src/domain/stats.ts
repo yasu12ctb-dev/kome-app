@@ -86,17 +86,19 @@ export function unpaid(receipts: readonly Receipt[]): { count: number; totalYen:
   return { count, totalYen, countWithoutPrice };
 }
 
-export function byYear(receipts: readonly Receipt[]): { year: number; count: number; kg: number; yen: number }[] {
-  const map = new Map<number, { count: number; tenths: number; yen: number }>();
+/** 年ごとの合計。yen は代金のある記録だけを足し、代金の無い記録の数を countWithoutPrice に分ける */
+export function byYear(receipts: readonly Receipt[]): { year: number; count: number; kg: number; yen: number; countWithoutPrice: number }[] {
+  const map = new Map<number, { count: number; tenths: number; yen: number; countWithoutPrice: number }>();
   for (const r of receipts) {
     const year = Number(r.date.slice(0, 4));
-    const cur = map.get(year) ?? { count: 0, tenths: 0, yen: 0 };
+    const cur = map.get(year) ?? { count: 0, tenths: 0, yen: 0, countWithoutPrice: 0 };
     cur.count += 1;
     cur.tenths += tenths(r.kg);
-    cur.yen += r.priceYen ?? 0;
+    if (r.priceYen === null) cur.countWithoutPrice += 1;
+    else cur.yen += r.priceYen;
     map.set(year, cur);
   }
-  return [...map.entries()].sort(([a], [b]) => b - a).map(([year, v]) => ({ year, count: v.count, kg: v.tenths / 10, yen: v.yen }));
+  return [...map.entries()].sort(([a], [b]) => b - a).map(([year, v]) => ({ year, count: v.count, kg: v.tenths / 10, yen: v.yen, countWithoutPrice: v.countWithoutPrice }));
 }
 
 /** その年の月ごとの kg（1〜12 月の 12 要素） */

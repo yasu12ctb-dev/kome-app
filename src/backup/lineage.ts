@@ -152,7 +152,8 @@ export function createLineageGate(db: KomeDb, newId: () => string): LineageGate 
         next = { ...initialLineage(newId()), config };
       } else {
         next = { ...current };
-        if (current.errorKind === 'auth' || current.errorKind === 'config') {
+        // 設定を保存し直したら、設定で直る種類の停止を解く（設計書 §4.0: auth・config・invalid）
+        if (current.errorKind === 'auth' || current.errorKind === 'config' || current.errorKind === 'invalid') {
           next.errorKind = null;
           next.retryAfter = null;
           next.lastErrorMessage = null;

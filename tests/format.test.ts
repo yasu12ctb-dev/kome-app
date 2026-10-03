@@ -97,3 +97,20 @@ describe('ホームの未払いの帯（バグ点検 P2-2）', async () => {
     expect(t.aria).toContain('ほか金額未入力 1件');
   });
 });
+
+describe('年の代金の合計（最終点検: 未入力を 0 円と見せない）', async () => {
+  const { yenTotalText } = await import('../src/ui/timeline');
+  const { byYear } = await import('../src/domain/stats');
+  const { receipt, uuid } = await import('./helpers');
+  const y = (n: number) => `${n.toLocaleString('ja-JP')}円`;
+  it('全件未入力・混在・すべて入力・0 円', () => {
+    expect(yenTotalText(0, 2, 2, y)).toBe('金額未入力');
+    expect(yenTotalText(12000, 3, 1, y)).toBe('12,000円（ほか金額未入力 1件）');
+    expect(yenTotalText(24000, 2, 0, y)).toBe('24,000円');
+    expect(yenTotalText(0, 1, 0, y)).toBe('0円');
+  });
+  it('byYear は代金の無い記録を数え、金額には足さない', () => {
+    const rs = [receipt({ id: uuid(21), date: '2026-01-01', priceYen: null }), receipt({ id: uuid(22), date: '2026-02-01', priceYen: 12000 })];
+    expect(byYear(rs)).toEqual([expect.objectContaining({ year: 2026, count: 2, yen: 12000, countWithoutPrice: 1 })]);
+  });
+});

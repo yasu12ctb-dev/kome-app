@@ -1,6 +1,7 @@
 import type { Receipt } from '../data/types';
 import { totalKg, unitPriceYen } from '../domain/stats';
 import { dotDate, kg, weekday, yen } from './format';
+import { yenTotalText } from './timeline';
 
 // 一覧（帳簿の罫線組み）。?unpaid で未払いだけに絞る
 
@@ -35,7 +36,8 @@ export function Records(props: { receipts: Receipt[]; onlyUnpaid: boolean }) {
               {year}
             </span>
             <span className="sub" style={{ fontSize: 12, fontWeight: 400 }}>
-              {rs.length}回・{kg(totalKg(rs))} kg・{yen(rs.reduce((s, r) => s + (r.priceYen ?? 0), 0))}
+              {rs.length}回・{kg(totalKg(rs))} kg・
+              {yenTotalText(rs.reduce((s, r) => s + (r.priceYen ?? 0), 0), rs.length, rs.filter((r) => r.priceYen === null).length, yen)}
             </span>
           </h2>
           <ul className="ledger">
@@ -53,7 +55,7 @@ export function Records(props: { receipts: Receipt[]; onlyUnpaid: boolean }) {
                     <span style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: 16, fontWeight: 800 }}>{kg(r.kg)} kg</span>
                       <span className="sub" style={{ fontSize: 12 }}>
-                        {r.priceYen !== null ? `${yen(r.priceYen)}・${unit}円/kg` : '代金なし'}
+                        {r.priceYen !== null ? `${yen(r.priceYen)}・${unit}円/kg` : '金額未入力'}
                       </span>
                     </span>
                     {r.paid ? (
