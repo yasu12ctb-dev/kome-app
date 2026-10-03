@@ -2,8 +2,8 @@ import type { IDBPObjectStore } from 'idb';
 import { toLocalYmd } from './date';
 import { createLineageGate, type LineageGate } from '../backup/lineage';
 import { openKomeDb, type KomeDb, type KomeSchema, type StopReason } from './db';
-import type { AppMeta, Receipt } from './types';
-import { validateReceipt, type ValidationError } from './validate';
+import type { AppMeta, Purchase, Receipt } from './types';
+import { validatePurchase, validateReceipt, type ValidationError } from './validate';
 
 // 記録の追加・編集・削除はすべてここを通す（設計書 §3）。
 // 各書き込みは 1 トランザクションで「記録の変更」と「dataRevision +1」を行う（I2・I3）。
@@ -27,12 +27,22 @@ export type DeleteResult =
   | { ok: false; kind: 'not-found' }
   | { ok: false; kind: 'failed'; message: string };
 
+export type PurchaseResult =
+  | { ok: true; purchase: Purchase | null }
+  | { ok: false; kind: 'invalid'; errors: ValidationError[] }
+  | { ok: false; kind: 'failed'; message: string };
+
 export interface Repo {
   listReceipts(): Promise<Receipt[]>;
   getAppMeta(): Promise<AppMeta>;
   addReceipt(input: ReceiptInput, now?: Date): Promise<WriteResult>;
   updateReceipt(id: string, input: ReceiptInput, now?: Date): Promise<WriteResult>;
   deleteReceipt(id: string): Promise<DeleteResult>;
+  /** 購入の記録（無ければ null。値のコピー） */
+  getPurchase(): Promise<Purchase | null>;
+  /** 購入の記録を書く・消す（設計書 §10・I15）。dataRevision は変えず、送信も予約しない */
+  setPurchase(input: { kg: number; date: string }, now?: Date): Promise<PurchaseResult>;
+  clearPurchase(): Promise<PurchaseResult>;
   close(): void;
 }
 
@@ -45,6 +55,8 @@ export interface OpenRepoOptions {
   newId?: () => string;
   /** 書き込みが確定した後に呼ぶ（送信の予約・他タブへの通知に使う）。トランザクションの外で呼ばれる */
   onChange?: () => void;
+  /** 購入の記録が確定した後に呼ぶ（他タブへの通知だけに使う。送信は予約しない。設計書 §10） */
+  onPurchaseChange?: () => void;
   onVersionChange?: () => void;
 }
 
@@ -73,17 +85,32 @@ export async function openRepo(options: OpenRepoOptions = {}): Promise<OpenRepoR
     ...(options.onVersionChange ? { onVersionChange: options.onVersionChange } : {}),
   });
   if (opened.kind === 'stopped') return opened;
-  return { kind: 'ok', repo: createRepo(opened.db, newId, options.onChange), lineage: createLineageGate(opened.db, newId) };
+  return { kind: 'ok', repo: createRepo(opened.db, newId, options.onChange, options.onPurchaseChange), lineage: createLineageGate(opened.db, newId) };
 }
 
-function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Repo {
+function createRepo(db: KomeDb, newId: () => string, onChange?: () => void, onPurchaseChange?: () => void): Repo {
   /** 確定した後の通知。通知の失敗は保存の失敗と分ける（確定した書き込みは成功として返す） */
-  function notifyChanged(): void {
+  function notify(fn: (() => void) | undefined): void {
     try {
-      onChange?.();
+      fn?.();
     } catch (e) {
       console.error('kome: 変更の通知に失敗しました', e);
     }
+  }
+  const notifyChanged = () => notify(onChange);
+
+  /** 購入の記録だけを 1 トランザクションで書く（meta の purchase キーだけに触れる） */
+  async function writePurchase(value: Purchase | null): Promise<PurchaseResult> {
+    try {
+      const tx = db.transaction('meta', 'readwrite');
+      if (value === null) await tx.store.delete('purchase');
+      else await tx.store.put(value, 'purchase');
+      await tx.done;
+    } catch (e) {
+      return { ok: false, kind: 'failed', message: message(e) };
+    }
+    notify(onPurchaseChange);
+    return { ok: true, purchase: value === null ? null : { ...value } };
   }
 
   /** 記録の変更と dataRevision +1 を 1 トランザクションで行う */
@@ -182,6 +209,21 @@ function createRepo(db: KomeDb, newId: () => string, onChange?: () => void): Rep
       }
       notifyChanged();
       return { ok: true, dataRevision };
+    },
+
+    async getPurchase() {
+      const p = (await db.get('meta', 'purchase')) as Purchase | undefined;
+      return p === undefined ? null : { ...p };
+    },
+
+    async setPurchase(input, now = new Date()) {
+      const checked = validatePurchase(input, toLocalYmd(now));
+      if (!checked.ok) return { ok: false, kind: 'invalid', errors: checked.errors };
+      return writePurchase({ ...checked.value, updatedAt: now.toISOString() });
+    },
+
+    clearPurchase() {
+      return writePurchase(null);
     },
 
     close() {

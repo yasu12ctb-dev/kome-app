@@ -51,6 +51,13 @@ export interface Lineage {
   lastErrorMessage: string | null;
 }
 
+/** 購入の記録（設計書 §10）。端末の中だけに置き、バックアップ・復元には含めない */
+export interface Purchase {
+  kg: number;
+  date: Ymd;
+  updatedAt: string;
+}
+
 export interface PreRestoreSnapshot {
   receipts: Receipt[];
   dataRevision: number;

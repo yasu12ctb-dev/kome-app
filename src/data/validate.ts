@@ -37,6 +37,26 @@ function isPositiveTenth(kg: number): boolean {
   return t >= 1 && Math.abs(kg * 10 - t) < 1e-9;
 }
 
+/** 購入した量の上限（kg）。記録 1 件の上限 1000 kg より大きくまとめて買えるようにする */
+export const MAX_PURCHASE_KG = 10000;
+
+/** 購入の記録の検証（設計書 §10）。量は 0.1 kg 刻みで 0 < kg ≤ 10000、購入日は実在する今日以前の日付 */
+export function validatePurchase(input: { kg: unknown; date: unknown }, today: Ymd): { ok: true; value: { kg: number; date: Ymd } } | { ok: false; errors: ValidationError[] } {
+  const errors: ValidationError[] = [];
+  const { kg, date } = input;
+  if (typeof kg !== 'number' || !Number.isFinite(kg) || kg <= 0 || kg > MAX_PURCHASE_KG) {
+    errors.push({ field: 'kg', message: `購入した量は 0 より大きく ${MAX_PURCHASE_KG.toLocaleString('ja-JP')} kg 以下で入れてください` });
+  } else if (!isPositiveTenth(kg)) {
+    errors.push({ field: 'kg', message: '購入した量は 0.1 kg 刻みで入れてください' });
+  }
+  if (!isValidYmd(date)) {
+    errors.push({ field: 'date', message: '購入日が正しくありません' });
+  } else if (daysBetween(today, date) > 0) {
+    errors.push({ field: 'date', message: '購入日に未来の日付は選べません' });
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: { kg: kg as number, date: date as Ymd } };
+}
+
 export function validateReceipt(input: unknown, today: Ymd): ValidationResult {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, errors: [{ field: 'record', message: '記録の形が正しくありません' }] };

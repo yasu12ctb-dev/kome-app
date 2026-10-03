@@ -1,5 +1,5 @@
 import { addDays, daysBetween } from '../data/date';
-import type { Receipt, Ymd } from '../data/types';
+import type { Purchase, Receipt, Ymd } from '../data/types';
 
 // 累計・経過日数・予測・集計は保存せず、毎回記録から計算する（設計書 I4・§8.1）
 
@@ -66,6 +66,14 @@ export function predictNext(receipts: readonly Receipt[], today: Ymd): Predictio
   const daysUntil = daysBetween(today, nextDate);
   const state: PredictionState = daysUntil < 0 ? 'overdue' : daysUntil === 0 ? 'today' : daysUntil <= SOON_DAYS ? 'soon' : 'ahead';
   return { kind: 'ok', nextDate, daysUntil, state, avgIntervalDays: span / (days.length - 1), kgPerDay };
+}
+
+/**
+ * 残り（設計書 §8.1・§10）: 購入量 − 購入日以降（同じ日を含む）に受け取った量。負なら受け取りすぎ
+ */
+export function remaining(receipts: readonly Receipt[], purchase: Pick<Purchase, 'kg' | 'date'>): { receivedKg: number; remainingKg: number } {
+  const received = receipts.filter((r) => r.date >= purchase.date).reduce((sum, r) => sum + tenths(r.kg), 0);
+  return { receivedKg: received / 10, remainingKg: (tenths(purchase.kg) - received) / 10 };
 }
 
 export function unitPriceYen(r: Receipt): number | null {

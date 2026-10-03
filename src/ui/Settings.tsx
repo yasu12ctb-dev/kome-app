@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { displayStatus } from '../backup/lineage';
 import type { PreviewResult, RestorePreview } from '../backup/service';
-import type { BackupConfig, Lineage, Receipt, Ymd } from '../data/types';
+import type { BackupConfig, Lineage, Purchase, Receipt, Ymd } from '../data/types';
 import { predictNext } from '../domain/stats';
 import { buildIcs, saveFile } from '../app/ics';
 import { dateTime, monthDay } from './format';
+import { PurchaseSection } from './Purchase';
 import type { KomeActions } from './useKome';
 
 // 設定（GitHub バックアップ・復元・そのほか）。データを置き換える操作は「復元」の群に分ける
@@ -36,6 +37,7 @@ function previewMessage(r: PreviewResult): string | null {
 
 export function Settings(props: {
   receipts: Receipt[];
+  purchase: Purchase | null;
   lineage: Lineage;
   dataRevision: number;
   deviceId: string;
@@ -116,6 +118,8 @@ export function Settings(props: {
         ← ホーム
       </a>
       <h1 className="title">設定</h1>
+
+      <PurchaseSection purchase={props.purchase} today={props.today} onSave={actions.setPurchase} onClear={actions.clearPurchase} />
 
       <h2 className="section-h">GitHub バックアップ</h2>
       <div className="row">

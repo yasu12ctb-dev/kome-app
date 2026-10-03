@@ -28,6 +28,11 @@ export const SCENARIOS = {
   sameDay: [[-5, 30, 12000, true], [-5, 30, 12000, true]],
   skewed: gapsToRows([1, 1, 1, 1, 1, 1, 1000, 1]),
   outOfRange: [[daysFromToday('2020-01-01'), 0.1, null, true], [0, 1000, null, true]],
+  // 購入の記録と残り（設計書 §10）
+  purchaseLeft: { rows: [[-3, 30, 12000, false], [-1, 30, 12000, false]], purchase: [240, -3] },
+  purchaseZero: { rows: [[-2, 120, null, true], [-1, 120, null, true]], purchase: [240, -2] },
+  purchaseOver: { rows: [[-2, 999.9, null, true], [-1, 999.9, null, true]], purchase: [0.1, -2] },
+  purchaseOnly: { rows: [], purchase: [9999.9, 0] },
   // 長い保存先の名前と、保存を止めているエラーの帯（meta を直接書く。アプリの経路は通らない）
   errorBanner: {
     rows: [[-40, 30, 12000, true], [-10, 30, 12000, true]],
@@ -96,6 +101,11 @@ async function seed(scenario) {
     const x = await r.repo.addReceipt({ date: ymd(off), kg, priceYen, paid });
     if (!x.ok) throw new Error(`seed failed: ${JSON.stringify(x)}`);
     ids.push(x.receipt.id);
+  }
+  if (!Array.isArray(scenario) && scenario.purchase) {
+    const [kg, off] = scenario.purchase;
+    const x = await r.repo.setPurchase({ kg, date: ymd(off) });
+    if (!x.ok) throw new Error(`seed purchase failed: ${JSON.stringify(x)}`);
   }
   r.repo.close();
   if (!Array.isArray(scenario) && scenario.lineage) await patchLineage(scenario.lineage);
@@ -239,6 +249,13 @@ async function open(route, width, editId, expect) {
 /** シナリオから、画面に出ているはずの値（ホームの合計量・集計の年の合計）を作る */
 function expectFor(scenario, route) {
   const rows = Array.isArray(scenario) ? scenario : scenario.rows;
+  const purchase = Array.isArray(scenario) ? null : scenario.purchase;
+  if (route === '' && purchase) {
+    const received = rows.reduce((s, r) => s + Math.round(r[1] * 10), 0);
+    const left = (Math.round(purchase[0] * 10) - received) / 10;
+    const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+    return { texts: [left >= 0 ? `残り ${fmt(left)}kg` : `購入より ${fmt(-left)}kg 多く受け取り`] };
+  }
   if (rows.length === 0) return {};
   const total = rows.reduce((s, r) => s + Math.round(r[1] * 10), 0) / 10;
   const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1)); // src/ui/format.ts の kg と同じ

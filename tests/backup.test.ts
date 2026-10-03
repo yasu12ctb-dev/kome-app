@@ -653,6 +653,60 @@ describe('I8: 復元（§6.1）', () => {
   });
 });
 
+describe('I15: 購入の記録はバックアップ・復元に入らない（設計書 §10）', () => {
+  const PURCHASE = { kg: 240, date: '2026-09-01' };
+
+  it('送る写しと書き出しのファイルに購入の記録が入らない', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo);
+    expect(await d.repo.setPurchase(PURCHASE, NOW)).toMatchObject({ ok: true });
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(gh.text(KEY)).not.toContain('purchase');
+    expect(Object.keys(remote(gh)!).sort()).toEqual(['appVersion', 'deviceId', 'exportedAt', 'format', 'receipts', 'revision', 'schemaVersion', 'writeId']);
+    const file = await d.service.exportFile();
+    expect(new TextDecoder().decode(file.bytes)).not.toContain('purchase');
+  });
+
+  it('購入の記録を変えても送信は要らないまま（保存済みのまま）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo);
+    await d.service.push();
+    const puts = appPuts(gh).length;
+    await d.repo.setPurchase(PURCHASE, NOW);
+    expect(await state(d.gate)).toMatchObject({ needs: false, status: 'saved' });
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(appPuts(gh)).toHaveLength(puts);
+  });
+
+  it('GitHub から復元・取り消しをしても購入の記録は変わらない', async () => {
+    const { b } = await restoreFixture();
+    await b.repo.setPurchase(PURCHASE, NOW);
+    const p = await b.service.previewRestoreFromGitHub();
+    if (p.kind !== 'ok') throw new Error(p.kind);
+    expect(await b.service.confirmRestore(p.preview)).toEqual({ kind: 'ok' });
+    expect(await b.repo.getPurchase()).toMatchObject(PURCHASE);
+    expect(await b.service.undoRestore()).toBe('ok');
+    expect(await b.repo.getPurchase()).toMatchObject(PURCHASE);
+  });
+
+  it('ファイルから復元しても購入の記録は変わらない（購入の記録の無い端末でも増えない）', async () => {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    const file = buildBackup({ deviceId: uuid(500), writeId: uuid(501), revision: 3, exportedAt: NOW.toISOString(), appVersion: '1.0.3', receipts: [] });
+    let p = await d.service.previewRestoreFromFile(file.bytes);
+    if (p.kind !== 'ok') throw new Error();
+    await d.service.confirmRestore(p.preview);
+    expect(await d.repo.getPurchase()).toBeNull();
+    await d.repo.setPurchase(PURCHASE, NOW);
+    p = await d.service.previewRestoreFromFile(file.bytes);
+    if (p.kind !== 'ok') throw new Error();
+    expect(await d.service.confirmRestore(p.preview)).toEqual({ kind: 'ok' });
+    expect(await d.repo.getPurchase()).toMatchObject(PURCHASE);
+  });
+});
+
 describe('I10: 鍵は Authorization ヘッダ以外に出さない', () => {
   it('送信本文・URL・エラー文言・書き出しファイルに鍵が含まれない', async () => {
     const gh = fakeGitHub();

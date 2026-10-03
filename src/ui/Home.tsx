@@ -1,12 +1,13 @@
 import { daysBetween } from '../data/date';
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
-import type { Lineage, Receipt, Ymd } from '../data/types';
+import type { Lineage, Purchase, Receipt, Ymd } from '../data/types';
 import { displayStatus } from '../backup/lineage';
 import { lastReceiptDate, predictNext, totalKg, unpaid, type Prediction } from '../domain/stats';
 import { kg, monthDay, monthDayWeek, yen } from './format';
 import { fitFontSize } from './fit';
 import { Bag, BagOutline } from './icons';
 import { unpaidText } from './timeline';
+import { RemainingLine } from './Purchase';
 
 const STATUS_TEXT = { unset: 'バックアップ未設定', saved: '保存済み', pending: '保存待ち', error: '保存が止まっています' } as const;
 
@@ -49,7 +50,7 @@ function useThemeColorFrom(ref: RefObject<HTMLElement | null>, key: string) {
   }, [ref, key]);
 }
 
-export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevision: number; today: Ymd; standalone: boolean; onConflict: () => void }) {
+export function Home(props: { receipts: Receipt[]; purchase: Purchase | null; lineage: Lineage; dataRevision: number; today: Ymd; standalone: boolean; onConflict: () => void }) {
   const { receipts, lineage, today } = props;
   const mainRef = useRef<HTMLElement | null>(null);
   const themeKey = receipts.length === 0 ? 'empty' : stateClass(predictNext(receipts, today));
@@ -102,6 +103,11 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
         <p className="sub" style={{ margin: '12px 0 0', fontSize: 15, lineHeight: 1.7 }}>
           2回記録すると、次に頼む目安の日が出ます。
         </p>
+        {props.purchase && (
+          <div style={{ marginTop: 12 }}>
+            <RemainingLine receipts={receipts} purchase={props.purchase} />
+          </div>
+        )}
         <a href="#settings" className="textlink" style={{ fontSize: 15 }}>
           機種変更した方は、バックアップから復元
         </a>
@@ -230,6 +236,7 @@ export function Home(props: { receipts: Receipt[]; lineage: Lineage; dataRevisio
             ))}
             {bagCount > 10 && <span className="more">×{bagCount}</span>}
           </span>
+          <RemainingLine receipts={receipts} purchase={props.purchase} />
         </div>
         {due.count > 0 && (
           <a href="#records?unpaid" className="tag" aria-label={dueText.aria}>

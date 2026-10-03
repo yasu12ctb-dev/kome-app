@@ -89,6 +89,7 @@ export function App(props: { coordinator?: ReloadCoordinator } = {}) {
     screen = (
       <Settings
         receipts={receipts}
+        purchase={state.purchase}
         lineage={lineage}
         dataRevision={meta.dataRevision}
         deviceId={meta.deviceId}
@@ -101,7 +102,7 @@ export function App(props: { coordinator?: ReloadCoordinator } = {}) {
       />
     );
   } else {
-    screen = <Home receipts={receipts} lineage={lineage} dataRevision={meta.dataRevision} today={today} standalone={isStandalone()} onConflict={() => setConflict(true)} />;
+    screen = <Home receipts={receipts} purchase={state.purchase} lineage={lineage} dataRevision={meta.dataRevision} today={today} standalone={isStandalone()} onConflict={() => setConflict(true)} />;
   }
 
   return (

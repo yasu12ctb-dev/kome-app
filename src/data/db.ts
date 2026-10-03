@@ -1,12 +1,12 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { ensureLineage } from '../backup/lineage';
-import { KNOWN_DB_VERSION, KNOWN_SCHEMA_VERSION, type AppMeta, type Lineage, type PreRestoreSnapshot, type Receipt } from './types';
+import { KNOWN_DB_VERSION, KNOWN_SCHEMA_VERSION, type AppMeta, type Lineage, type PreRestoreSnapshot, type Purchase, type Receipt } from './types';
 
 // IndexedDB を開くのはこのファイルだけ（設計書 §3「変更の能力の持ち出し」）
 
 export interface KomeSchema extends DBSchema {
   receipts: { key: string; value: Receipt };
-  meta: { key: 'app' | 'backup' | 'preRestoreSnapshot'; value: AppMeta | Lineage | PreRestoreSnapshot };
+  meta: { key: 'app' | 'backup' | 'preRestoreSnapshot' | 'purchase'; value: AppMeta | Lineage | PreRestoreSnapshot | Purchase };
   secrets: { key: 'githubToken'; value: string };
 }
 

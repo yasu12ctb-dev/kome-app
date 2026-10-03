@@ -69,6 +69,10 @@ a { color: inherit; }
 .total .value small { font-size: 16px; font-weight: 700; margin-left: 3px; }
 .bags { display: flex; flex-wrap: wrap; gap: 3px; max-width: 220px; }
 .bags .more { font-size: 13px; font-weight: 800; margin-left: 4px; }
+/* 残り（設計書 §10）。「これまで」の下に、同じ太さの短い一行で */
+.remain { font-size: 16px; font-weight: 800; }
+.remain b { font-size: 24px; font-weight: 900; margin: 0 2px; }
+.remain-hint { font-size: 13px; font-weight: 700; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; min-height: 32px; display: inline-flex; align-items: center; }
 .tag {
   position: relative; display: flex; flex-direction: column; justify-content: center; gap: 2px;
   min-height: 64px; min-width: 44px; padding: 8px 14px 8px 30px;

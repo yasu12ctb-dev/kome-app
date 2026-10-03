@@ -53,6 +53,10 @@ describe('§3 データを変えうる経路', () => {
     expect(readFileSync(join(ROOT, 'src/ui/useKome.ts'), 'utf8')).toContain("coordinator.request('db-upgrade')");
   });
 
+  it("meta の 'purchase' を書く・消すのは src/data/repo.ts だけ（I15）", () => {
+    expect(filesMatching(/\.(put|delete)\([^;]*?['"]purchase['"]\s*\)/)).toEqual(['src/data/repo.ts']);
+  });
+
   it('外部への通信（fetch）と api.github.com は src/backup/github.ts だけ', () => {
     expect(filesMatching(/\bfetch\s*\(/)).toEqual(['src/backup/github.ts']);
     expect(filesMatching(/api\.github\.com/)).toEqual(['src/backup/github.ts']);

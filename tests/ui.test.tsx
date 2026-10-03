@@ -10,6 +10,8 @@ import { AddEdit } from '../src/ui/AddEdit';
 import { App } from '../src/ui/App';
 import { Settings } from '../src/ui/Settings';
 import { Stats } from '../src/ui/Stats';
+import { PurchaseSection, RemainingLine } from '../src/ui/Purchase';
+import { isBusy as reloadBusy } from '../src/app/reload';
 import { receipt, uuid } from './helpers';
 import type { KomeActions } from '../src/ui/useKome';
 
@@ -79,6 +81,8 @@ function fakeActions(over: Partial<KomeActions> = {}): KomeActions {
     confirmRestore: never,
     undoRestore: never,
     exportFile: never,
+    setPurchase: never,
+    clearPurchase: never,
     ...over,
   };
 }
@@ -115,6 +119,7 @@ describe('I11: 設定の未保存の入力（U3 実装検収 P2-1）', () => {
     lineage,
     dataRevision: 0,
     deviceId: 'd',
+    purchase: null,
     hasSnapshot: false,
     today: '2026-10-02',
     version: 't',
@@ -217,5 +222,45 @@ describe('集計で選んでいた年の記録が無くなったとき（最終�
     await act(async () => root!.render(<Stats receipts={[r2025]} today="2026-10-04" />));
     expect(host.textContent).toContain('2025年　1回・12,000円');
     expect(host.textContent).not.toContain('2026年　0回');
+  });
+});
+
+describe('購入の記録と残り（設計書 §10）', () => {
+  const button = (text: string) => [...host.querySelectorAll('button')].find((b) => b.textContent === text)!;
+
+  it('設定: 保存に失敗したら入力が残り未保存のまま（読み込み直しを待たせる）、保存できたら未保存が解ける', async () => {
+    let result: { ok: true; purchase: { kg: number; date: string; updatedAt: string } } | { ok: false; kind: 'failed'; message: string } = { ok: false, kind: 'failed', message: 'x' };
+    const onSave = vi.fn(async () => result);
+    await render(<PurchaseSection purchase={null} today="2026-10-04" onSave={onSave} onClear={async () => ({ ok: true, purchase: null })} />);
+    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '240');
+    expect(host.querySelector('[data-dirty="true"]')).not.toBeNull();
+    await act(async () => button('保存').click());
+    expect(onSave).toHaveBeenCalledWith({ kg: 240, date: '2026-10-04' });
+    expect(host.textContent).toContain('保存できませんでした');
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('240');
+    expect(reloadBusy(document)).toBe(true);
+    result = { ok: true, purchase: { kg: 240, date: '2026-10-04', updatedAt: 'x' } };
+    await act(async () => root!.render(<PurchaseSection purchase={{ kg: 240, date: '2026-10-04', updatedAt: 'x' }} today="2026-10-04" onSave={onSave} onClear={async () => ({ ok: true, purchase: null })} />));
+    await act(async () => button('保存').click());
+    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+  });
+
+  it('設定: 量が空や文字なら数でない値として渡し、検証のエラーを出す', async () => {
+    const onSave = vi.fn(async () => ({ ok: false as const, kind: 'invalid' as const, errors: [{ field: 'kg' as const, message: '購入した量は 0 より大きく 10,000 kg 以下で入れてください' }] }));
+    await render(<PurchaseSection purchase={null} today="2026-10-04" onSave={onSave} onClear={async () => ({ ok: true, purchase: null })} />);
+    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, 'abc');
+    await act(async () => button('保存').click());
+    expect(Number.isNaN((onSave.mock.calls[0] as unknown as [{ kg: number }])[0].kg)).toBe(true);
+    expect(host.textContent).toContain('10,000 kg 以下');
+  });
+
+  it('ホーム: 残り・受け取りすぎ・購入の記録なしの表示', async () => {
+    const rs = [receipt({ id: uuid(41), date: '2026-09-30', kg: 30 }), receipt({ id: uuid(42), date: '2026-10-01', kg: 30 })];
+    await render(<RemainingLine receipts={rs} purchase={{ kg: 240, date: '2026-10-01', updatedAt: 'x' }} />);
+    expect(host.textContent).toBe('残り 210kg');
+    await act(async () => root!.render(<RemainingLine receipts={rs} purchase={{ kg: 20, date: '2026-09-01', updatedAt: 'x' }} />));
+    expect(host.textContent).toBe('購入より 40kg 多く受け取り');
+    await act(async () => root!.render(<RemainingLine receipts={rs} purchase={null} />));
+    expect(host.querySelector('a[href="#settings"]')!.textContent).toContain('購入した量を記録すると');
   });
 });

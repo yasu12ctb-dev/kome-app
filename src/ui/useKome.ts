@@ -7,8 +7,8 @@ import type { LineageGate } from '../backup/lineage';
 import { createBackupService, type BackupService, type ConfirmResult, type PreviewResult, type RestorePreview } from '../backup/service';
 import { toLocalYmd } from '../data/date';
 import type { StopReason } from '../data/db';
-import { openRepo, type ReceiptInput, type Repo, type WriteResult, type DeleteResult } from '../data/repo';
-import type { AppMeta, BackupConfig, Lineage, Receipt, Ymd } from '../data/types';
+import { openRepo, type PurchaseResult, type ReceiptInput, type Repo, type WriteResult, type DeleteResult } from '../data/repo';
+import type { AppMeta, BackupConfig, Lineage, Purchase, Receipt, Ymd } from '../data/types';
 
 // 画面とデータ基盤・バックアップをつなぐ（設計書 §6 の起動手順・§4.0 の送信のきっかけ・§7 の複数タブ）
 
@@ -20,6 +20,8 @@ export type KomeState =
   | {
       kind: 'ready';
       receipts: Receipt[];
+      /** 購入の記録（端末の中だけ。設計書 §10） */
+      purchase: Purchase | null;
       meta: AppMeta;
       lineage: Lineage;
       hasSnapshot: boolean;
@@ -32,6 +34,8 @@ export interface KomeActions {
   add(input: ReceiptInput): Promise<WriteResult>;
   update(id: string, input: ReceiptInput): Promise<WriteResult>;
   remove(id: string): Promise<DeleteResult>;
+  setPurchase(input: { kg: number; date: string }): Promise<PurchaseResult>;
+  clearPurchase(): Promise<PurchaseResult>;
   saveConfig(config: BackupConfig | null, token?: string): Promise<boolean>;
   retryNow(): Promise<void>;
   overwriteRemote(): Promise<void>;
@@ -55,10 +59,11 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
     const repo = repoRef.current;
     const gate = gateRef.current;
     if (!repo || !gate || upgradingRef.current) return;
-    const [receipts, meta, l, hasSnapshot] = await Promise.all([repo.listReceipts(), repo.getAppMeta(), gate.read(), gate.hasPreRestoreSnapshot()]);
+    const [receipts, purchase, meta, l, hasSnapshot] = await Promise.all([repo.listReceipts(), repo.getPurchase(), repo.getAppMeta(), gate.read(), gate.hasPreRestoreSnapshot()]);
     setState((prev) => ({
       kind: 'ready',
       receipts,
+      purchase,
       meta,
       lineage: l.lineage,
       hasSnapshot,
@@ -78,6 +83,8 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
           schedulerRef.current?.notifyChange();
           channelRef.current?.post();
         },
+        // 購入の記録は送る内容に入らないので、送信は予約せず他タブへ知らせるだけ（設計書 §10）
+        onPurchaseChange: () => channelRef.current?.post(),
         onVersionChange: () => {
           // 別のタブが新しい版で DB を上げた。DB は閉じた（db.ts）。画面は残して入力を守り、
           // 送信のきっかけと読み直しを止め、窓口に予約する（§6.2 の db-upgrade）
@@ -164,6 +171,16 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
     },
     async remove(id) {
       const r = await repo().deleteReceipt(id);
+      if (r.ok) await refresh();
+      return r;
+    },
+    async setPurchase(input) {
+      const r = await repo().setPurchase(input);
+      if (r.ok) await refresh();
+      return r;
+    },
+    async clearPurchase() {
+      const r = await repo().clearPurchase();
       if (r.ok) await refresh();
       return r;
     },
