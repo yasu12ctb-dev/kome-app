@@ -1,11 +1,21 @@
 # Kome-app 設計書: 米の受取記録・予測・GitHub 自動バックアップ（PWA）
 
-- 状態: 設計検収 合格（2026-10-01、改訂 3）・成立性確認済み（§8。ブラウザから PAT 付きの通し確認も 2026-10-01 合格）。U1 実装検収 合格、U2 の実装に着手
-- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]／改訂 3: 2026-10-01 [claude]
+- 状態: **改訂 5（購入と残り）は設計検収待ち**。改訂 4 まで設計検収 合格（2026-10-01、改訂 3）・成立性確認済み（§8。ブラウザから PAT 付きの通し確認も 2026-10-01 合格）。U1 実装検収 合格、U2 の実装に着手
+- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]／改訂 3: 2026-10-01 [claude]／改訂 5: 2026-10-04 [claude]
 - 範囲: 初版 v1.0.0 の全体（データ基盤／集計・予測／GitHub 自動バックアップと復元／自動アップデート／カレンダー書き出し／集計グラフ）
-- 範囲外: UI の見た目（設計の合格後に Claude Design へ依頼する。本書は画面の「中身と振る舞い」だけ決める）、残量管理（消費の手入力）、複数端末・家族での共有、Web Push 通知、Swift 版
+- 範囲外: UI の見た目（設計の合格後に Claude Design へ依頼する。本書は画面の「中身と振る舞い」だけ決める）、家にある量の管理（消費の手入力）。※「購入した量のうち、まだ受け取っていない量」は改訂 5 で範囲に入れた（§10）、複数端末・家族での共有、Web Push 通知、Swift 版
 
 ### 改訂の変更点
+
+**改訂 5**（2026-10-04。ユーザーの依頼「購入数（何キロ）を記録して、ホームの『これまで』の下に残り何キロと表示」。質問への回答: 残り＝**まだ受け取っていない量**、来年の購入は**購入日から数え直す**）
+
+| 変更 | 反映先 |
+|---|---|
+| 購入の記録（量・購入日）を端末に 1 つだけ持つ。書き込みは `repo` の 1 トランザクションで `dataRevision` +1 と一緒に行う | §0・§2（`meta.purchase`）・§3・I2・I3・**§10** |
+| 残り＝購入量 − 購入日以降の受け取りの合計。保存せず毎回計算する | I4・§8.1・§10 |
+| バックアップの形式を `schemaVersion: 2` にし、`purchase` を含める。v1 のファイルは `purchase: null` に変換して読む | I5・I9・§2.1 |
+| 復元・取り消しで購入の記録も入れ替える。確認画面に購入の記録も並べる | I8・§6.1・§4.4 |
+| DB の版を 2 に上げ、版上げの中で `meta.app.schemaVersion` を 2 にする。古い版のアプリ（購入の記録を知らない）は `VersionError` で停止モードになり、購入の記録の無い写しで GitHub を上書きしない | I13・§2・§5・§6 |
 
 **改訂 4**（2026-10-02。U3 の実装検収が 2 回続けて「自動アップデート・入力の保護」で不合格になったため、設計へ戻って §6.2 を新設）
 
@@ -49,7 +59,8 @@
 | 形態 | PWA のみ（Swift へ移行しない） |
 | 利用者 | 本人 1 人・iPhone 1 台（ホーム画面に追加して使う） |
 | データの正本 | **端末内（IndexedDB）**。変更のたびに本人専用の非公開 GitHub リポジトリへ JSON を自動保存し、機種変更時はそこから復元する |
-| 「現在合計何 kg」 | **累計購入量**（受け取った kg の合計）。残量は扱わない |
+| 「現在合計何 kg」 | **累計購入量**（受け取った kg の合計）。家にある量（消費）は扱わない |
+| 購入と残り（2026-10-04 追加） | 購入した量と購入日を設定画面で記録し、ホームの「これまで」の下に「残り N kg」＝**まだ受け取っていない量**（購入量 − 購入日以降に受け取った量）を出す。新しく購入したら購入の記録を書き換え、その購入日から数え直す（購入の履歴は持たない）。§10 |
 | 追加機能（採用） | 金額と支払い状況／次回予測のカレンダー登録（.ics）／年間・月別の集計グラフ |
 | 追加機能（不採用） | 品種・年産・メモ欄 |
 
@@ -67,41 +78,43 @@
 
 | 画面 | 中身 |
 |---|---|
-| ホーム | 累計購入量（kg）／最終受取日と経過日数／次回購入の予測日と「あと N 日」（予測できないときは理由）／未払いの件数と金額／バックアップ状態（未設定・保存済み・保存待ち・エラーの種類） |
+| ホーム | 累計購入量（kg）とその下に残り（購入の記録があるとき。§10）／最終受取日と経過日数／次回購入の予測日と「あと N 日」（予測できないときは理由）／未払いの件数と金額／バックアップ状態（未設定・保存済み・保存待ち・エラーの種類） |
 | 記録の追加・編集 | 受取日（既定: 今日）、量 kg（既定: 前回の値、初回は 30）、代金（円・任意）、支払い済み（既定: 未払い）。編集・削除 |
 | 記録一覧 | 受取日の新しい順。日付・kg・代金・kg 単価・支払い状況 |
 | 集計 | 年ごとの kg・代金の合計、月別の kg（棒グラフ）、購入間隔の推移 |
-| 設定 | GitHub バックアップの設定（トークン・リポジトリ名）と状態、今すぐ保存、GitHub から復元、JSON ファイルから復元、復元の取り消し、JSON ファイル書き出し、カレンダー登録、バージョン表示 |
+| 設定 | 購入の記録（量・購入日。書き換え・消す。§10）、GitHub バックアップの設定（トークン・リポジトリ名）と状態、今すぐ保存、GitHub から復元、JSON ファイルから復元、復元の取り消し、JSON ファイル書き出し、カレンダー登録、バージョン表示 |
 
 ## 1. 不変条件
 
 | # | 不変条件 |
 |---|---|
 | I1 | 「保存しました」を出すのは、IndexedDB のトランザクションが完了（`tx.done`）した後だけ。失敗したら入力内容を画面に残してエラーを出す |
-| I2 | 端末に入る記録は必ず `validateReceipt` を通っている: `id` は UUID／`date` は実在する `YYYY-MM-DD` で今日以前／`kg` は 0 < kg ≤ 1000・小数 1 桁まで／`priceYen` は null か 0 以上の整数／`paid` は真偽値／`createdAt`・`updatedAt` は ISO 8601 で `updatedAt ≥ createdAt`。追加・編集・復元の全経路が通る。バックアップはさらに外枠ごと `validateBackup`（§2.1）を通る |
-| I3 | 記録の変更と `dataRevision` の +1 は **同じトランザクション** で行う（片方だけ残らない）。「保存待ち」は保存せず、常に `needsPush`（§2.2）から導出する |
-| I4 | 累計 kg・経過日数・予測・集計は保存しない。毎回、記録から計算する |
-| I5 | GitHub 上の `kome-backup.json` は、常に「ある時点の端末データ全体」の完全な写し（1 ファイル 1 回の PUT で置き換え。部分書き込みをしない） |
+| I2 | 端末に入る記録は必ず `validateReceipt` を通っている: `id` は UUID／`date` は実在する `YYYY-MM-DD` で今日以前／`kg` は 0 < kg ≤ 1000・小数 1 桁まで／`priceYen` は null か 0 以上の整数／`paid` は真偽値／`createdAt`・`updatedAt` は ISO 8601 で `updatedAt ≥ createdAt`。追加・編集・復元の全経路が通る。購入の記録は `validatePurchase`（§10）を、設定・復元の全経路で通る。バックアップはさらに外枠ごと `validateBackup`（§2.1）を通る |
+| I3 | 記録・購入の記録の変更と `dataRevision` の +1 は **同じトランザクション** で行う（片方だけ残らない）。「保存待ち」は保存せず、常に `needsPush`（§2.2）から導出する |
+| I4 | 累計 kg・残り・経過日数・予測・集計は保存しない。毎回、記録から計算する |
+| I5 | GitHub 上の `kome-backup.json` は、常に「ある時点の端末データ全体（記録の全件と購入の記録）」の完全な写し（1 ファイル 1 回の PUT で置き換え。部分書き込みをしない） |
 | I6 | 古い写しが新しい写しを上書きしない。同じ世代の中で `lastPushedRevision` は増える方向にしか変わらず、送信中に端末が変われば送り直す |
 | I7 | GitHub 上のファイルを確認なしに上書きしてよいのは、(a) sha がこの世代の `lastPushedSha` と一致するとき、または (b) GET した本文の SHA-256 がこの世代の `pendingPush.bodySha256` と完全一致するとき（＝自分が送った写しそのもの）だけ。`deviceId` や `revision` の値は判定に使わない。それ以外はユーザーの確認を取る |
-| I8 | 復元は、確認した時点の端末 `dataRevision`・系譜の世代・（GitHub からなら）blob sha が、確定直前も変わっていないときだけ行う。全件入れ替え・`preRestoreSnapshot`・`dataRevision`・系譜の更新を 1 トランザクションで行う |
+| I8 | 復元は、確認した時点の端末 `dataRevision`・系譜の世代・（GitHub からなら）blob sha が、確定直前も変わっていないときだけ行う。全件入れ替え・購入の記録の入れ替え・`preRestoreSnapshot`（記録と購入の記録）・`dataRevision`・系譜の更新を 1 トランザクションで行う |
 | I9 | `validateBackup` を通らないバックアップ（自分より新しい `schemaVersion`、外枠の不正、1 件でも不正な記録、ID の重複）は、1 件も適用せず拒否する |
 | I10 | GitHub トークンは `Authorization` ヘッダで `api.github.com` へ送る以外に端末の外へ出さない（バックアップ JSON・書き出しファイル・URL・ログ・エラー表示に含めない） |
 | I11 | 自動アップデートの再読み込みは、入力中（入力欄にフォーカス、または開いているフォームに未保存の変更がある）やダイアログ表示中には行わない。予約・再判定・実行は §6.2 の窓口 1 つだけが行う |
 | I12 | 予測は計算に使える受取日が 2 日以上あるときだけ出す。出せないときは理由を出す（0 除算・NaN を出さない。予測日を過ぎたら「予測日を N 日過ぎています」と出す） |
 | I13 | 自分より新しい DB の版・`schemaVersion` に出会ったら「停止モード」に入り、端末のデータにも GitHub にも一切書かない |
+| I15 | 購入の記録（`meta.purchase`）を書くのは `repo` の `setPurchase`／`clearPurchase`、関所の `restore`／`undoRestore`、DB の版上げ（§10）だけ。購入の記録を知らない版のアプリは、購入の記録のある端末のデータにも GitHub にも書かない（DB の版 2 で `VersionError` → 停止モード） |
 | I14 | 系譜（§2.2）を書き換えるのは §4.4 の関所だけ。関所は、呼び出し側が持つ世代が今の系譜と一致しないとき、また送信・照合の結果（成功・エラーとも）なら `writeId` が今の `pendingPush.writeId` と一致しないとき、何も書かない（古い送信の結果が、新しい保存先の系譜にも、同じ保存先の新しい送信にも入らない） |
 
 ## 2. 永続する状態
 
-IndexedDB データベース `kome`（DB の版 1）。
+IndexedDB データベース `kome`（DB の版 2。改訂 5 で 1 → 2）。
 
 | 場所 | 中身（形式） | 書く者 |
 |---|---|---|
 | store `receipts`（key: `id`） | `{ id: UUID, date: 'YYYY-MM-DD', kg: number, priceYen: number \| null, paid: boolean, createdAt: ISO8601, updatedAt: ISO8601 }` | `repo.addReceipt / updateReceipt / deleteReceipt`、系譜の関所の `restore / undoRestore` 操作（§4.4） |
-| store `meta`, key `app` | `{ schemaVersion: 1, deviceId: UUID, dataRevision: number }` | 初回起動時の初期化、`repo` の各書き込み、系譜の関所の `restore / undoRestore` |
+| store `meta`, key `app` | `{ schemaVersion: 2, deviceId: UUID, dataRevision: number }` | 初回起動時の初期化、DB の版上げ（1 → 2 で `schemaVersion` を 2 に）、`repo` の各書き込み、系譜の関所の `restore / undoRestore` |
+| store `meta`, key `purchase` | `{ kg: number, date: 'YYYY-MM-DD', updatedAt: ISO8601 }`。無ければ購入の記録なし | `repo.setPurchase / clearPurchase`、系譜の関所の `restore / undoRestore`（I15） |
 | store `meta`, key `backup` | §2.2 の系譜 | **系譜の関所（§4.4）だけ** |
-| store `meta`, key `preRestoreSnapshot` | 復元直前の `receipts` 全件と `dataRevision`、取得時刻。無ければ未設定 | 系譜の関所の `restore / undoRestore`（使ったら消す） |
+| store `meta`, key `preRestoreSnapshot` | 復元直前の `receipts` 全件・購入の記録（無ければ null）・`dataRevision`、取得時刻（版上げ 1 → 2 で、既存のものに `purchase: null` を足す）。無ければ未設定 | 系譜の関所の `restore / undoRestore`（使ったら消す） |
 | store `secrets`, key `githubToken` | Fine-grained PAT の文字列 | 系譜の関所の `saveConfig` だけ |
 | GitHub `kome-data/kome-backup.json` | §2.1 の形式 | `backup.push`・衝突の解決だけ |
 | Cache Storage | アプリ本体（precache。データは入れない） | Service Worker |
@@ -115,13 +128,14 @@ IndexedDB データベース `kome`（DB の版 1）。
 ```json
 {
   "format": "kome-backup",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "deviceId": "…",
   "writeId": "…",
   "revision": 12,
   "exportedAt": "2026-09-30T13:00:00.000Z",
   "appVersion": "1.0.0",
-  "receipts": [ { "id": "…", "date": "2026-01-10", "kg": 30, "priceYen": 12000, "paid": true, "createdAt": "…", "updatedAt": "…" } ]
+  "receipts": [ { "id": "…", "date": "2026-01-10", "kg": 30, "priceYen": 12000, "paid": true, "createdAt": "…", "updatedAt": "…" } ],
+  "purchase": { "kg": 240, "date": "2026-10-01", "updatedAt": "…" }
 }
 ```
 
@@ -130,9 +144,10 @@ IndexedDB データベース `kome`（DB の版 1）。
 - **`validateBackup(json)`**（書き込みの前に全体を検証。1 つでも外れたら全体を拒否し、理由を「どのキー／何件目のどの値か」で返す）:
   - トップレベル: オブジェクトである／`format === 'kome-backup'`／`schemaVersion` は 1 以上の整数で、アプリの知る版以下（大きければ「アプリを更新してください」）／`deviceId`・`writeId` は UUID／`revision` は 0 以上の安全な整数／`exportedAt` は ISO 8601／`appVersion` は文字列／`receipts` は配列
   - 各記録: `validateReceipt` を通る（I2）
+  - `purchase`（v2）: null か、`validatePurchase`（§10）を通る
   - 全体: `id` が重複しない
   - 未知のキーは読み捨てる（保持しない。§8）
-  - 自分より古い `schemaVersion` は、版ごとの変換関数を通して現行の形にしてから検証する（v1 時点では変換なし）
+  - 自分より古い `schemaVersion` は、版ごとの変換関数を通して現行の形にしてから検証する。**v1 → v2: `purchase: null` を足す**（v1 のファイルには購入の記録が無い）。v2 で `purchase` のキーが無いファイルは不正として拒否する（書き手はこのアプリだけで、v2 は必ず書くため）
 
 ### 2.2 バックアップの系譜（`meta.backup`）
 
@@ -162,6 +177,7 @@ type Lineage = {
 | 経路 | 塞ぎ方 |
 |---|---|
 | 記録の追加・編集・削除（画面） | すべて `repo`（`src/data/repo.ts`）の関数を通す。各関数は 1 トランザクションで `validateReceipt` → `receipts` の書き込み → `meta.app.dataRevision` +1 を行う（I2・I3）。画面から `idb` を直接開かない。`repo` は `meta.backup` に触らない |
+| 購入の記録の設定・書き換え・消去（設定画面） | `repo.setPurchase(input)`／`repo.clearPurchase()` だけ。1 トランザクションで `validatePurchase` → `meta.purchase` の put／delete → `dataRevision` +1（I2・I3・I15）。画面から `idb` を直接開かない |
 | 系譜（`meta.backup`）・トークン・復元 | すべて §4.4 の系譜の関所（`src/backup/lineage.ts`）を通す。関所の外から `meta.backup`・`secrets`・`preRestoreSnapshot` を書かない（I14） |
 | 復元（GitHub から／JSON ファイルから） | §6.1 の手順でだけ、関所の `restore` 操作を呼ぶ。バックアップ側の `revision` を端末の番号に持ち込まない |
 | 復元の取り消し | 関所の `undoRestore` 操作 |
@@ -173,7 +189,7 @@ type Lineage = {
 | Service Worker | アプリ本体のキャッシュだけを扱い、IndexedDB に触らない |
 | GitHub 側での手編集・別端末からの書き込み | 端末へは自動で取り込まない。次の保存で sha が合わなくなったときに §4 の衝突として扱う（I7） |
 | 試験用の入口 | `repo`・関所・`backup` を `fake-indexeddb` と差し替えた `fetch` の上で直接呼ぶ。本番コードに試験専用の書き込み口は作らない |
-| 変更の能力の持ち出し | `repo`・関所は DB ハンドルやトランザクションを外へ返さない（戻り値は値のコピーだけ）。`idb` の `openDB` を呼ぶのは `src/data/db.ts` の 1 か所だけ。`meta.backup` を put するのは `lineage.ts` だけ。grep で見張る（§9） |
+| 変更の能力の持ち出し | `repo`・関所は DB ハンドルやトランザクションを外へ返さない（戻り値は値のコピーだけ）。`idb` の `openDB` を呼ぶのは `src/data/db.ts` の 1 か所だけ。`meta.backup` を put するのは `lineage.ts` だけ。`meta.purchase` を put／delete するのは `repo.ts`・`lineage.ts` だけ（版上げは `purchase` を作らない）。grep で見張る（§9） |
 
 ## 4. GitHub 自動保存
 
@@ -265,7 +281,7 @@ type Lineage = {
 | `clearErrorForRetry(gen)` | Web Lock 内。世代の一致 | `errorKind = null`、`retryAfter = null`（`pendingPush`・sha・revision は触らない） | 「今すぐ保存」（§4.0） |
 | `adoptRemoteSha(gen, sha \| null)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`（null ならファイルが無い）、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
 | `restore(expected, backup, source)` | Web Lock 内。世代の一致、`dataRevision` = 確認時の D0 | §6.1 手順 3 のとおり（記録の全件入れ替えを含む） | §6.1 |
-| `undoRestore(gen)` | Web Lock 内。世代の一致、`preRestoreSnapshot` がある | 記録を戻し、スナップショットを消し、`dataRevision` +1、`pendingPush = null`、`errorKind = null`、`retryAfter = null`（系譜の sha・revision はそのまま → `needsPush` になり、次の送信で GitHub も取り消し後の内容になる。取り消し前の GitHub の内容は git の履歴に残る） | 設定画面 |
+| `undoRestore(gen)` | Web Lock 内。世代の一致、`preRestoreSnapshot` がある | 記録と購入の記録を戻し、スナップショットを消し、`dataRevision` +1、`pendingPush = null`、`errorKind = null`、`retryAfter = null`（系譜の sha・revision はそのまま → `needsPush` になり、次の送信で GitHub も取り消し後の内容になる。取り消し前の GitHub の内容は git の履歴に残る） | 設定画面 |
 
 ## 5. 失敗・中断の地点ごとの表
 
@@ -291,11 +307,17 @@ type Lineage = {
 | Service Worker の更新途中 | 旧版のアプリ本体がキャッシュに残る | 次回の起動・前面復帰で更新を再確認 | データに影響なし |
 | DB の版上げ（将来）の途中で落ちた | IndexedDB の版上げは 1 トランザクションなので旧版のまま | 次の起動で版上げをやり直す | 半端な移行にならない |
 | 新しい DB を古いアプリで開いた | 何も変わらない | 停止モード。アプリの更新を取りに行く | 書かない（I13） |
+| 購入の記録の書き込みトランザクションの確定前 | 何も変わらない | 設定画面にエラーを出し、入力を残す | 半端に残らない（I1・I3） |
+| DB の版上げ 1 → 2 の途中で落ちた | 版 1 のまま（版上げは 1 トランザクション） | 次の起動でやり直す | `schemaVersion` だけ・スナップショットだけが変わった状態にならない |
+| 版上げの時に古い版のタブが開いている | 古いタブは `versionchange` で DB を閉じ、§6.2 の `db-upgrade` で読み込み直す（入力中は待つ） | 読み込み直した後は新しい版 | 古いタブは書けない（DB を閉じている）。保存は失敗として入力を残す |
+| 版上げ後に、キャッシュに残った古い版のアプリが開いた | 何も変わらない | `VersionError` → 停止モード、更新を取りに行く | 購入の記録の無い写しで GitHub を上書きしない（I15） |
+| 版上げの前に GitHub へ送った v1 の写しが残っている | GitHub は v1 の写し（購入の記録なし＝端末と同じ） | 版上げは `dataRevision` を変えないので送り直さない。次の変更で v2 を送る | 端末と GitHub の内容は同じ。`pendingPush` の照合は本文のハッシュで行うので形式の版に影響されない |
 
 ## 6. 起動時・再開時の手順
 
 1. `openDB('kome', KNOWN_DB_VERSION)` で開く。`VersionError` なら停止モード（I13）: 「新しい版のアプリで作られたデータです。アプリを更新してください」を出し、`registration.update()` を呼び、以降の手順を行わない
-2. 初めてなら `meta.app` を `{ schemaVersion: 1, deviceId: 新しい UUID, dataRevision: 0 }` で、`meta.backup` を §2.2 の初期値で作る（1 トランザクション）
+   - 版の移行（`upgrade` の中・1 トランザクション）: 0 → 1 は store を作る。**1 → 2 は `meta.app` があれば `schemaVersion` を 2 にし、`preRestoreSnapshot` があれば `purchase: null` を足す**（`dataRevision` は変えない。`meta.purchase` は作らない＝購入の記録なし）
+2. 初めてなら `meta.app` を `{ schemaVersion: 2, deviceId: 新しい UUID, dataRevision: 0 }` で、`meta.backup` を §2.2 の初期値で作る（1 トランザクション）
 3. `meta.app.schemaVersion` がアプリの知っている版より大きい → 停止モード（手順 1 と同じ）
 4. `navigator.storage.persist()` を要求。ホーム画面から起動していない（`display-mode: standalone` でない）ときは追加を促す
 5. 自動アップデートを準備（Libroli の方式: `controllerchange` で再読み込みを予約し、I11 の条件を満たしたら実行。前面復帰・フォーカス時と 1 時間ごとに `registration.update()`）
@@ -306,13 +328,13 @@ type Lineage = {
 ### 6.1 復元（GitHub から／JSON ファイルから）
 
 1. **取得と検証**: GitHub なら GET（本文と blob sha）、ファイルならファイル読み込み。`validateBackup` を通す。通らなければ理由を出して終わり（I9）。GET の失敗は §4.1 の分類で表示して終わり
-2. **確認**: 端末の件数・累計 kg・最終受取日と、バックアップの同じ値を並べて見せる。このときの端末 `dataRevision`（= D0）、系譜の世代（= G0）、GitHub の blob sha（= S0。ファイルからの復元なら無し）を控える。確認文:
+2. **確認**: 端末の件数・累計 kg・最終受取日・購入の記録（量と購入日、無ければ「なし」）と、バックアップの同じ値を並べて見せる。このときの端末 `dataRevision`（= D0）、系譜の世代（= G0）、GitHub の blob sha（= S0。ファイルからの復元なら無し）を控える。確認文:
    - 「端末の N 件を、バックアップの M 件で置き換えます。置き換え前の端末の内容は、この端末の中に 1 つだけ残り、取り消せます」
    - GitHub からの復元では追加で「復元後は、この端末がこのバックアップを引き継いで GitHub を更新します」
 3. **確定**: 「置き換える」を押したら Web Lock `kome-backup` を取り、ロックの中で:
    1. GitHub からの復元なら、GET し直して sha が S0 と同じか確かめる。違えば手順 1 へ戻る。GET が失敗したら置き換えずに終わる
    2. 関所 `restore({ D0, G0, S0 }, backup, source)` を呼ぶ。1 つの readwrite トランザクションで `dataRevision = D0` かつ世代 = G0 を確かめ（違えば中止して手順 1 へ戻る）、同じトランザクションで:
-      - `preRestoreSnapshot` = 現在の全件と D0／`receipts` 全削除 → 全件追加／`dataRevision = D0 + 1`
+      - `preRestoreSnapshot` = 現在の全件・購入の記録と D0／`receipts` 全削除 → 全件追加／`meta.purchase` をバックアップの `purchase` に（null なら消す）／`dataRevision = D0 + 1`
       - 系譜（どちらの復元でも）: `pendingPush = null`、`errorKind = null`、`retryAfter = null`
       - GitHub からの復元: さらに `lastPushedSha = S0`、`lastPushedRevision = D0 + 1`（GitHub と端末が同じ内容なので保存済み）
       - JSON ファイルからの復元: `lastPushedSha`・`lastPushedRevision` はそのまま（→ `needsPush`。次の送信で GitHub へ送る。GitHub の sha が一致しなければ通常どおり `conflict`）
@@ -414,6 +436,7 @@ reloading ──（ページが読み込み直される。以後の予約・再�
 - **kg 単価** = `priceYen ÷ kg`（代金が無ければ出さない）
 - **未払い** = `paid === false` かつ `priceYen` がある記録の件数と合計（代金が空の未払いは件数だけ数える）
 - **年・月の集計**: 受取日の年・月で分ける（日本の日付）
+- **残り**（改訂 5）: 購入の記録があるときだけ。受け取り済み = 受取日が購入日**以降（同じ日を含む）**の記録の kg の合計（0.1 kg 刻みの整数で足す）。残り = 購入量 − 受け取り済み。0 以上なら「残り N kg」、負なら「購入より N kg 多く受け取っています」。購入日より前の記録は数えない
 - **カレンダー（.ics）**: 予測日に終日の予定「お米の購入目安」、3 日前に通知（`VALARM TRIGGER:-P3D`）。UID は `kome-next@<deviceId>` で固定し、登録し直すと同じ予定の更新になるようにする
 
 ## 9. 不変条件と試験の対応
@@ -448,3 +471,30 @@ reloading ──（ページが読み込み直される。以後の予約・再�
 | I13 | U1（`tests/repo.test.ts`「I13」）: 版 2 の DB を版 1 で開く → `newer-db-version`、DB の版・store・中身が変わらない。`schemaVersion: 2` → `newer-schema`、`meta.app` 不変・系譜も作らない | M9 `VersionError` を捕まえない → 1 件、M10 `schemaVersion` を確かめない → 1 件が落ちた |
 | §4.1 の契約 | U2: 送るヘッダ・`ref`・PUT の本文の形を固定。応答の `content.sha` を記録し `commit.sha` を記録しない。403（rate limit ヘッダあり／なし）・429・404・一般の 422・sha 不一致の 422・409 の各分類 | V10 403 を常に auth → 3 件、V11 commit.sha を記録 → 10 件、V16 rate-limit の待ち時刻を見ない → 1 件が落ちた |
 | §3 の経路 | U1（`tests/static.test.ts`）: IndexedDB を開くのは `db.ts` だけ、`meta.backup` の put は `lineage.ts` だけ、`meta.app` の put は `db.ts`・`repo.ts` だけ、記録の store は `repo.ts` だけ、`fetch` は無い（全出現を許可リストと照合）。検索式は型引数つき（`openDB<…>(`）・入れ子の括弧つきの呼び出しも拾う形にした（初版の式はこの 2 つを見落とし、試験が赤になって気づいた）。`api.github.com` の照合は U2 で足す | M11 別ファイルから `indexedDB.open` → 1 件が落ちた |
+
+### 9.1 改訂 5 の試験（予定）
+
+| 不変条件・振る舞い | 試験（予定） |
+|---|---|
+| I2・`validatePurchase` | 量が 0・負・10000 超・0.1 刻みでない・数でない、購入日が実在しない・未来、`updatedAt` が不正 → 拒否。設定と復元の両方の経路 |
+| I3・I15 | `setPurchase`／`clearPurchase` で `meta.purchase` と `dataRevision` +1 が同じトランザクション（DB を閉じて失敗 → どちらも残らない）。`needsPush` になる |
+| I4・§8.1 残り | 購入日より前の記録は数えない・同じ日は数える・受け取り超過は「多く受け取り」・購入の記録なしでは出さない・0.1 kg の足し算で誤差が出ない。記録の編集・削除で残りが変わる |
+| I5・§2.1 | 写しに `purchase` が入る（null を含む）。写しは 1 つの読み取りトランザクションから作る |
+| I9・v1 → v2 | v1 のファイルを `purchase: null` で読める。v2 で `purchase` のキーが無い・不正な `purchase` → 全体を拒否。v3 → 「アプリを更新してください」 |
+| I8 | 復元で購入の記録も入れ替わる（null なら消える）。確認後に別タブで購入の記録が変わった → `dataRevision` が変わり置き換えない。取り消しで購入の記録も戻る |
+| I13・I15・版上げ | 版 1 の DB（記録・スナップショットあり）を版 2 で開く → `schemaVersion` 2、スナップショットに `purchase: null`、`dataRevision` 不変、記録は不変。版 2 の DB を版 1 のアプリで開く → `VersionError` で停止モード |
+| §3 の経路 | 静的の見張り: `meta` の `purchase` キーへの put／delete は `repo.ts`・`lineage.ts` だけ |
+| 画面 | ホームの「これまで」の下に残り（購入の記録なしなら設定への案内）、設定で記録・書き換え・消去、保存失敗で入力が残る（`data-dirty`）。総点検に購入の状態（残りあり・ゼロ・超過・なし）を足す |
+
+## 10. 購入と残り（改訂 5）
+
+**購入の記録** `meta.purchase = { kg, date, updatedAt }`（無ければ購入の記録なし）。端末に 1 つだけ。購入の履歴は持たない（来年の購入は書き換えで、その購入日から数え直す）。
+
+- **`validatePurchase`**: `kg` は 0 < kg ≤ 10000・0.1 kg 刻み（記録と同じ `isPositiveTenth`）／`date` は実在する `YYYY-MM-DD` で今日以前／`updatedAt` は ISO 8601。設定（`setPurchase`）と復元（`validateBackup` の中）で通す
+- **書き込み**（§3・I15）: `repo.setPurchase({ kg, date })` は 1 トランザクションで検証 → `meta.purchase` を put（`updatedAt` は今）→ `dataRevision` +1。`repo.clearPurchase()` は delete → `dataRevision` +1。どちらも確定後に変更を通知（送信の予約・他タブ）。失敗なら何も変わらず入力が残る（I1）
+- **読み取り**: `repo.getPurchase()`（値のコピー）。写し（`readSnapshot`）は記録・`dataRevision`・購入の記録を 1 つの読み取りトランザクションで読む
+- **表示**: ホームの「これまで N kg」の下に「残り N kg」（§8.1）。購入の記録が無ければ「購入した量を記録すると、残りが出ます」の小さな案内（設定へ）。記録 0 件のホーム（最初の一袋）でも、購入の記録があれば残り（＝購入量）を出す
+- **設定画面**: 「購入した量」の欄（量 kg・購入日。既定は今日）と保存・消す。未保存の入力は `data-dirty`（I11）
+- **バックアップ**: §2.1 の `purchase`。復元の確認画面に購入の記録を並べる（§6.1）
+- **DB の版上げ 1 → 2**: §6 手順 1。`meta.app.schemaVersion` を 2 にするのは、古い版のアプリ（購入の記録を知らず、送ると写しから購入の記録が落ちる）に書かせないため（I15）。既存の記録・`dataRevision`・系譜は変えない
+- **並行**: 購入の記録は記録と同じく IndexedDB のトランザクションで直列化し、`dataRevision` で変化を検出する（§7 と同じ。新しい並行の筋は無い）
