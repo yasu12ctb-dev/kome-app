@@ -256,7 +256,7 @@ type Lineage = {
 
 | 操作 | 前提の確認 | 書く内容 | 呼ぶ者 |
 |---|---|---|---|
-| `saveConfig(expectedGeneration, config, token?)` | Web Lock 内。世代の一致 | 保存先が変わった（または null から設定した）: 新しい `generation`、`lastPushedSha = null`、`lastPushedRevision = null`、`pendingPush = null`、`errorKind = null`、`retryAfter = null`、トークン。**トークンだけ**の変更: 系譜はそのまま、トークンを書き、`errorKind` が `auth`／`config` なら消す。**保存先を外す**（config を null）: 新しい世代・送信記録なしにし、鍵（`secrets.githubToken`）も消す | 設定画面 |
+| `saveConfig(expectedGeneration, config, token?)` | Web Lock 内。世代の一致 | 保存先が変わった（または null から設定した）: 新しい `generation`、`lastPushedSha = null`、`lastPushedRevision = null`、`pendingPush = null`、`errorKind = null`、`retryAfter = null`、トークン。**トークンだけ**の変更: 系譜はそのまま、トークンを書き、`errorKind` が `auth`／`config`／`invalid` なら消す（§4.0 の解除条件。`conflict` は消さない）。**保存先を外す**（config を null）: 新しい世代・送信記録なしにし、鍵（`secrets.githubToken`）も消す | 設定画面 |
 | `beginPush(gen, pending)` | 世代の一致、`pendingPush` が null | `pendingPush` | §4.2 手順 5 |
 | `recordPushLanded(gen, writeId, sha)` | 世代と `writeId` の一致 | `lastPushedSha = sha`、`lastPushedRevision = max(現在値 ?? -1, pendingPush.revision)`、`lastPushedAt`、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.2 手順 3・7 |
 | `clearPending(gen, writeId)` | 世代と `writeId` の一致 | `pendingPush = null` | §4.2 手順 3 |
