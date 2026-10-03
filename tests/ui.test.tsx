@@ -254,6 +254,61 @@ describe('購入の記録と残り（設計書 §10）', () => {
     expect(host.textContent).toContain('10,000 kg 以下');
   });
 
+  it('設定: 未編集のときにほかの画面で購入の記録が変わったら新しい値に合わせ、古い値を送らない（実装検収 74519483 P2-1）', async () => {
+    const onSave = vi.fn(async (i: { kg: number; date: string }) => ({ ok: true as const, purchase: { ...i, updatedAt: 'y' } }));
+    const onClear = async () => ({ ok: true as const, purchase: null });
+    const view = (purchase: { kg: number; date: string; updatedAt: string } | null) => <PurchaseSection purchase={purchase} today="2026-10-04" onSave={onSave} onClear={onClear} />;
+    await render(view({ kg: 240, date: '2026-10-01', updatedAt: 'a' }));
+    await act(async () => root!.render(view({ kg: 180, date: '2026-10-02', updatedAt: 'b' })));
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('180');
+    expect(host.querySelector<HTMLInputElement>('#purchase-date')!.value).toBe('2026-10-02');
+    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+    expect(button('保存').disabled).toBe(true);
+    // ほかの画面で消された
+    await act(async () => root!.render(view(null)));
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('');
+    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('設定: 編集中にほかの画面で変わったら入力を守って知らせ、「今の記録に戻す」で合わせられる', async () => {
+    const onSave = vi.fn(async (i: { kg: number; date: string }) => ({ ok: true as const, purchase: { ...i, updatedAt: 'y' } }));
+    const onClear = async () => ({ ok: true as const, purchase: null });
+    const view = (purchase: { kg: number; date: string; updatedAt: string } | null) => <PurchaseSection purchase={purchase} today="2026-10-04" onSave={onSave} onClear={onClear} />;
+    await render(view({ kg: 240, date: '2026-10-01', updatedAt: 'a' }));
+    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '300');
+    await act(async () => root!.render(view({ kg: 180, date: '2026-10-02', updatedAt: 'b' })));
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('300');
+    expect(host.textContent).toContain('ほかの画面で購入の記録が変わりました（今は 180kg・10月2日）');
+    expect(host.querySelector('[data-dirty="true"]')).not.toBeNull();
+    await act(async () => button('今の記録に戻す').click());
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('180');
+    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+    expect(host.textContent).not.toContain('ほかの画面で');
+  });
+
+  it('設定: 保存・消去の応答を待つ間は入力できず、応答で新しい入力が消えない（実装検収 74519483 P2-2）', async () => {
+    let finish!: () => void;
+    const onSave = vi.fn(
+      (i: { kg: number; date: string }) =>
+        new Promise<{ ok: true; purchase: { kg: number; date: string; updatedAt: string } }>((r) => (finish = () => r({ ok: true, purchase: { ...i, updatedAt: 'y' } }))),
+    );
+    let finishClear!: () => void;
+    const onClear = vi.fn(() => new Promise<{ ok: true; purchase: null }>((r) => (finishClear = () => r({ ok: true, purchase: null }))));
+    await render(<PurchaseSection purchase={{ kg: 240, date: '2026-10-01', updatedAt: 'a' }} today="2026-10-04" onSave={onSave} onClear={onClear} />);
+    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '300');
+    await act(async () => button('保存').click());
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(true);
+    expect(host.querySelector<HTMLInputElement>('#purchase-date')!.disabled).toBe(true);
+    await act(async () => finish());
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(false);
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('300');
+    await act(async () => button('消す').click());
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(true);
+    await act(async () => finishClear());
+    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('');
+  });
+
   it('ホーム: 残り・受け取りすぎ・購入の記録なしの表示', async () => {
     const rs = [receipt({ id: uuid(41), date: '2026-09-30', kg: 30 }), receipt({ id: uuid(42), date: '2026-10-01', kg: 30 })];
     await render(<RemainingLine receipts={rs} purchase={{ kg: 240, date: '2026-10-01', updatedAt: 'x' }} />);
