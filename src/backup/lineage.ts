@@ -87,7 +87,10 @@ export interface LineageGate {
     message?: string,
   ): Promise<boolean>;
   /** sha が null なら GitHub にファイルが無い（次の PUT は sha なしの新規作成） */
+  /** 衝突の解決「端末の内容で上書き」（§4.3）。lastPushedRevision を null に戻し、必ず全件を送り直す（I6 のただ 1 つの例外。改訂 6） */
   adoptRemoteSha(generation: string, sha: string | null): Promise<boolean>;
+  /** GitHub の確かめ（§4.5）で外からの書き換えを見つけた。pendingPush が無く、lastPushedSha が比べた値のまま、エラーが無いときだけ conflict にする */
+  recordRemoteChanged(generation: string, comparedSha: string | null, message: string): Promise<boolean>;
   clearErrorForRetry(generation: string): Promise<boolean>;
   restore(expected: RestoreExpectation, receipts: readonly Receipt[], source: 'github' | 'file', now: Date): Promise<boolean>;
   undoRestore(generation: string): Promise<'ok' | 'stale' | 'no-snapshot'>;
@@ -209,11 +212,19 @@ export function createLineageGate(db: KomeDb, newId: () => string): LineageGate 
       return update(sameGen(generation), (l) => ({
         ...l,
         lastPushedSha: sha,
+        lastPushedRevision: null,
         pendingPush: null,
         errorKind: null,
         retryAfter: null,
         lastErrorMessage: null,
       }));
+    },
+
+    recordRemoteChanged(generation, comparedSha, message) {
+      return update(
+        (l) => l.generation === generation && l.pendingPush === null && l.lastPushedSha === comparedSha && l.errorKind === null,
+        (l) => ({ ...l, errorKind: 'conflict', retryAfter: null, lastErrorMessage: message }),
+      );
     },
 
     clearErrorForRetry(generation) {

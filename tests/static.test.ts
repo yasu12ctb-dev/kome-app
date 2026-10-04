@@ -57,6 +57,10 @@ describe('§3 データを変えうる経路', () => {
     expect(filesMatching(/\.(put|delete)\([^;]*?['"]purchase['"]\s*\)/)).toEqual(['src/data/repo.ts']);
   });
 
+  it('試験用の代わりの排他を有効にする関数は、本番のコードから呼ばない（定義の lock.ts だけ。改訂 6）', () => {
+    expect(filesMatching(/enableLocalLockForTests\s*\(/)).toEqual(['src/backup/lock.ts']);
+  });
+
   it('外部への通信（fetch）と api.github.com は src/backup/github.ts だけ', () => {
     expect(filesMatching(/\bfetch\s*\(/)).toEqual(['src/backup/github.ts']);
     expect(filesMatching(/api\.github\.com/)).toEqual(['src/backup/github.ts']);

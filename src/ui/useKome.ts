@@ -37,7 +37,8 @@ export interface KomeActions {
   setPurchase(input: { kg: number; date: string }): Promise<PurchaseResult>;
   clearPurchase(): Promise<PurchaseResult>;
   saveConfig(config: BackupConfig | null, token?: string): Promise<boolean>;
-  retryNow(): Promise<void>;
+  /** 今すぐ保存。GitHub と確かめられなかったら false（§4.5） */
+  retryNow(): Promise<boolean>;
   overwriteRemote(): Promise<void>;
   previewFromGitHub(): Promise<PreviewResult>;
   previewFromFile(bytes: Uint8Array): Promise<PreviewResult>;
@@ -104,14 +105,14 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
       const service = createBackupService({ gate: opened.lineage, appVersion: APP_VERSION });
       serviceRef.current = service;
       const scheduler = createPushScheduler({
-        push: async () => {
-          await service.push();
+        push: async (opts) => {
+          await service.push(opts);
           await refresh();
         },
       });
       schedulerRef.current = scheduler;
       channelRef.current = createChangeChannel(() => void refresh());
-      const detachTriggers = attachPushTriggers(scheduler, window);
+      const detachTriggers = attachPushTriggers(scheduler, window, { now: () => Date.now(), verifiedAt: Date.now() });
       const onVisible = () => {
         if (document.visibilityState === 'visible') void refresh();
       };
@@ -131,8 +132,8 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
         document.removeEventListener('visibilitychange', onVisible);
       };
       await refresh();
-      // §6 手順 7: 起動時に裏で送る（画面の描画を待たせない）
-      scheduler.triggerNow();
+      // §6 手順 7: 起動時に裏で送る（画面の描画を待たせない）。送る必要が無くても GitHub を確かめる（§4.5）
+      scheduler.triggerNow({ verify: true });
     })();
     return () => {
       disposed = true;
@@ -192,8 +193,9 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
       return ok;
     },
     async retryNow() {
-      await service().retryNow();
+      const r = await service().retryNow();
       await afterBackupChange();
+      return r.kind !== 'verify-failed';
     },
     async overwriteRemote() {
       await service().overwriteRemote();

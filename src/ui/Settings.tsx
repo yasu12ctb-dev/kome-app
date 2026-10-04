@@ -5,6 +5,7 @@ import type { BackupConfig, Lineage, Purchase, Receipt, Ymd } from '../data/type
 import { predictNext } from '../domain/stats';
 import { buildIcs, saveFile } from '../app/ics';
 import { dateTime, monthDay } from './format';
+import { hasWebLocks } from '../backup/lock';
 import { PurchaseSection } from './Purchase';
 import type { KomeActions } from './useKome';
 
@@ -122,6 +123,11 @@ export function Settings(props: {
       <PurchaseSection purchase={props.purchase} today={props.today} onSave={actions.setPurchase} onClear={actions.clearPurchase} />
 
       <h2 className="section-h">GitHub バックアップ</h2>
+      {!hasWebLocks() && (
+        <p className="errors" role="status">
+          このブラウザでは GitHub へのバックアップを使えません（Web Locks に対応していません）。iPhone の iOS を新しくするか、「JSON ファイルに書き出す」で残してください。
+        </p>
+      )}
       <div className="row">
         <span>状態</span>
         <span style={{ fontWeight: 800, color: status === 'error' ? 'var(--shu)' : undefined }}>
@@ -157,7 +163,12 @@ export function Settings(props: {
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
-            <button type="button" className="secondary" disabled={busy} onClick={() => void run(actions.retryNow)}>
+            <button type="button" className="secondary" disabled={busy} onClick={() =>
+                void run(async () => {
+                  if (!(await actions.retryNow())) setMessage('GitHub と確かめられませんでした。通信を確かめて、もう一度お試しください');
+                })
+              }
+            >
               今すぐ保存
             </button>
           </div>

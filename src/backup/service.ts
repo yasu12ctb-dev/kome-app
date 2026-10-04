@@ -3,6 +3,7 @@ import type { BackupConfig, BackupErrorKind, Receipt } from '../data/types';
 import { buildBackup, parseBackupBytes, sha256Hex, summarize, type BackupFile } from './format';
 import { createGitHubClient, type GitHubClient } from './github';
 import { displayStatus, isStopError, needsPush, type DisplayStatus, type LineageGate } from './lineage';
+import type { Lineage } from '../data/types';
 import { withBackupLock } from './lock';
 
 // GitHub 自動保存（設計書 §4.2）・衝突の解決（§4.3）・復元（§6.1）
@@ -21,7 +22,9 @@ export interface BackupServiceOptions {
 
 export type PushOutcome =
   | { kind: 'skipped'; reason: 'busy' | 'not-configured' | 'stopped' | 'waiting-retry' | 'up-to-date' | 'no-token' | 'loop-limit' }
-  | { kind: 'done'; status: DisplayStatus; errorKind: BackupErrorKind | null };
+  | { kind: 'done'; status: DisplayStatus; errorKind: BackupErrorKind | null }
+  /** GitHub の確かめ（§4.5）の GET が失敗した。系譜には何も書いていない */
+  | { kind: 'verify-failed'; errorKind: BackupErrorKind; message: string };
 
 export interface RestorePreview {
   source: 'github' | 'file';
@@ -42,8 +45,9 @@ export type PreviewResult =
 export type ConfirmResult = { kind: 'ok' } | { kind: 'changed' } | { kind: 'error'; errorKind: BackupErrorKind; message: string };
 
 export interface BackupService {
-  push(): Promise<PushOutcome>;
-  /** 設定画面の「今すぐ保存」: エラーを消してから送る（§4.0） */
+  /** verify が真なら、送る必要が無いときも GitHub を確かめる（§4.5。起動・前面復帰） */
+  push(options?: { verify?: boolean }): Promise<PushOutcome>;
+  /** 設定画面の「今すぐ保存」: エラーを消してから送り、送る必要が無ければ GitHub を確かめる（§4.0・§4.5） */
   retryNow(): Promise<PushOutcome>;
   saveConfig(config: BackupConfig | null, token?: string): Promise<boolean>;
   /** 衝突の解決「端末の内容で上書き」（§4.3） */
@@ -72,8 +76,25 @@ export function createBackupService(options: BackupServiceOptions): BackupServic
     return `kome: rev ${revision}（${s.count}件・累計 ${s.totalKg}kg）`;
   }
 
+  /** §4.5 GitHub の確かめ。Web Lock を持った状態で、送る必要が無いときだけ呼ぶ */
+  async function verifyLocked(L: Lineage): Promise<PushOutcome> {
+    if (L.config === null) return { kind: 'skipped', reason: 'not-configured' };
+    const client = await clientFor();
+    if (client === null) return { kind: 'skipped', reason: 'no-token' };
+    const S = L.lastPushedSha;
+    const g = await client.get(L.config);
+    // 失敗は系譜に書かない（確かめられなかっただけ）
+    if (g.kind === 'error') return { kind: 'verify-failed', errorKind: g.errorKind, message: g.message };
+    if (g.kind === 'ok' && g.sha !== S) {
+      await gate.recordRemoteChanged(L.generation, S, 'GitHub 側のファイルが、この端末の送った内容から変わっています');
+    } else if (g.kind === 'not-found' && S !== null) {
+      await gate.recordRemoteChanged(L.generation, S, 'GitHub 側のファイルが見つかりません（外で消された可能性があります）');
+    }
+    return finish();
+  }
+
   /** §4.2 手順 2〜9。Web Lock を持った状態で呼ぶ */
-  async function pushLocked(): Promise<PushOutcome> {
+  async function pushLocked(verify = false): Promise<PushOutcome> {
     let loops = 0;
     let notFoundRetried = false;
     while (loops < MAX_PUSH_LOOPS) {
@@ -81,7 +102,7 @@ export function createBackupService(options: BackupServiceOptions): BackupServic
       if (L.config === null) return { kind: 'skipped', reason: 'not-configured' };
       if (isStopError(L.errorKind)) return { kind: 'skipped', reason: 'stopped' };
       if (L.retryAfter !== null && Date.parse(L.retryAfter) > now().getTime()) return { kind: 'skipped', reason: 'waiting-retry' };
-      if (!needsPush(L, dataRevision)) return finish();
+      if (!needsPush(L, dataRevision)) return verify && loops === 0 ? verifyLocked(L) : finish();
       const client = await clientFor();
       if (client === null) return { kind: 'skipped', reason: 'no-token' };
       const target = L.config;
@@ -181,8 +202,8 @@ export function createBackupService(options: BackupServiceOptions): BackupServic
   }
 
   return {
-    async push() {
-      const result = await withBackupLock({ ifAvailable: true }, pushLocked);
+    async push(options) {
+      const result = await withBackupLock({ ifAvailable: true }, () => pushLocked(options?.verify === true));
       return result ?? { kind: 'skipped', reason: 'busy' };
     },
 
@@ -190,7 +211,7 @@ export function createBackupService(options: BackupServiceOptions): BackupServic
       const result = await withBackupLock({ ifAvailable: false }, async () => {
         const { lineage } = await gate.read();
         await gate.clearErrorForRetry(lineage.generation);
-        return pushLocked();
+        return pushLocked(true);
       });
       return result ?? { kind: 'skipped', reason: 'busy' };
     },

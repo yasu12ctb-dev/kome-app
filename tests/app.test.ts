@@ -61,6 +61,40 @@ describe('送信のきっかけ（§4.0・U3 の必須試験）', () => {
     expect(s.triggerNow).toHaveBeenCalledTimes(2);
   });
 
+  it('前面復帰の確かめは、直前の確かめ（起動時を含む）から 10 分以上たったときだけ（§4.5）', () => {
+    const s = { notifyChange: vi.fn(), triggerNow: vi.fn(), dispose: vi.fn() };
+    let t = 1_000_000;
+    const detach = attachPushTriggers(s, window, { now: () => t, verifiedAt: t });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    const visible = () => document.dispatchEvent(new Event('visibilitychange'));
+    t += 9 * 60 * 1000;
+    visible();
+    t += 60 * 1000;
+    visible();
+    t += 60 * 1000;
+    visible();
+    window.dispatchEvent(new Event('online'));
+    expect(s.triggerNow.mock.calls.map((c) => (c[0] as { verify?: boolean } | undefined)?.verify === true)).toEqual([false, true, false, false]);
+    detach();
+  });
+
+  it('確かめの依頼は、送信中に重なっても次の 1 回へ引き継ぐ', async () => {
+    const calls: boolean[] = [];
+    let release!: () => void;
+    const push = vi.fn(async (o: { verify: boolean }) => {
+      calls.push(o.verify);
+      if (calls.length === 1) await new Promise<void>((r) => (release = r));
+    });
+    const sch = createPushScheduler({ push });
+    sch.triggerNow();
+    sch.triggerNow({ verify: true });
+    sch.triggerNow();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([false, true]);
+  });
+
   it('送信が例外を出してもきっかけは止まらない', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const push = vi.fn(async () => {

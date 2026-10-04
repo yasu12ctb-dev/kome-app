@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createGitHubClient } from '../src/backup/github';
 import { displayStatus, needsPush, type LineageGate } from '../src/backup/lineage';
 import { createBackupService, MAX_PUSH_LOOPS, type BackupService } from '../src/backup/service';
@@ -704,6 +704,175 @@ describe('I15: 購入の記録はバックアップ・復元に入らない（�
     if (p.kind !== 'ok') throw new Error();
     expect(await d.service.confirmRestore(p.preview)).toEqual({ kind: 'ok' });
     expect(await d.repo.getPurchase()).toMatchObject(PURCHASE);
+  });
+});
+
+describe('改訂 6: GitHub の確かめ（§4.5）・上書きの送り直し（§4.3）', () => {
+  const gets = (gh: Gh) => gh.requests.filter((r) => r.method === 'GET').length;
+  async function savedDevice() {
+    const gh = fakeGitHub();
+    const d = await device(gh);
+    await add(d.repo);
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    return { gh, d };
+  }
+
+  it('外から書き換えられても、確かめの無い送信は GitHub を見ず、確かめ付きの送信で conflict になり PUT しない（52faa0dd の再現）', async () => {
+    const { gh, d } = await savedDevice();
+    gh.setRemote(KEY, JSON.stringify({ other: true }));
+    const g0 = gets(gh);
+    const p0 = appPuts(gh).length;
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(gets(gh)).toBe(g0);
+    expect(await d.service.push({ verify: true })).toMatchObject({ status: 'error', errorKind: 'conflict' });
+    expect(gets(gh)).toBe(g0 + 1);
+    expect(appPuts(gh)).toHaveLength(p0);
+    expect(gh.text(KEY)).toBe(JSON.stringify({ other: true }));
+  });
+
+  it('外で消されていても conflict。sha が同じなら何も書かない', async () => {
+    const { gh, d } = await savedDevice();
+    const before = await state(d.gate);
+    expect(await d.service.push({ verify: true })).toMatchObject({ status: 'saved' });
+    expect(await state(d.gate)).toEqual(before);
+    gh.files.delete(KEY);
+    expect(await d.service.push({ verify: true })).toMatchObject({ errorKind: 'conflict' });
+  });
+
+  it('「今すぐ保存」も確かめる', async () => {
+    const { gh, d } = await savedDevice();
+    gh.setRemote(KEY, '{}');
+    expect(await d.service.retryNow()).toMatchObject({ errorKind: 'conflict' });
+  });
+
+  it('確かめの GET が失敗しても系譜は変わらず保存済みのまま。結果で確かめられなかったことが分かる', async () => {
+    for (const fail of [() => { throw new TypeError('offline'); }, () => new Response('{}', { status: 429 }), () => new Response('{}', { status: 401 })]) {
+      const { gh, d } = await savedDevice();
+      const before = await state(d.gate);
+      gh.hooks.onRequest = fail;
+      expect(await d.service.push({ verify: true })).toMatchObject({ kind: 'verify-failed' });
+      expect(await d.service.retryNow()).toMatchObject({ kind: 'verify-failed' });
+      gh.hooks.onRequest = undefined;
+      expect(await state(d.gate)).toEqual(before);
+    }
+  });
+
+  it('外で書き換えられて conflict → 端末無変更のまま「端末の内容で上書き」で全件を送り直し、GitHub が端末の内容に戻る', async () => {
+    const { gh, d } = await savedDevice();
+    const mine = remote(gh)!;
+    gh.setRemote(KEY, '{}');
+    await d.service.push({ verify: true });
+    const p0 = appPuts(gh).length;
+    expect(await d.service.overwriteRemote()).toMatchObject({ status: 'saved' });
+    expect(appPuts(gh)).toHaveLength(p0 + 1);
+    expect(remote(gh)).toMatchObject({ deviceId: mine.deviceId, receipts: mine.receipts });
+    expect(await state(d.gate)).toMatchObject({ status: 'saved', errorKind: null });
+  });
+
+  it('外で消されていたら、上書きは sha を省いた新規作成', async () => {
+    const { gh, d } = await savedDevice();
+    gh.files.delete(KEY);
+    await d.service.push({ verify: true });
+    expect(await d.service.overwriteRemote()).toMatchObject({ status: 'saved' });
+    expect(appPuts(gh).at(-1)!.body).not.toHaveProperty('sha');
+    expect(remote(gh)!.receipts).toHaveLength(1);
+  });
+
+  it('I6 の例外: 上書きで lastPushedRevision を null に戻した後、送る前に止まっても次の送信で全件を送る。上書きの送信中に足した記録も送る', async () => {
+    const { gh, d } = await savedDevice();
+    gh.setRemote(KEY, '{}');
+    await d.service.push({ verify: true });
+    const { lineage } = await d.gate.read();
+    expect(await d.gate.adoptRemoteSha(lineage.generation, gh.files.get(KEY)!.sha)).toBe(true);
+    expect(await state(d.gate)).toMatchObject({ lastPushedRevision: null, needs: true });
+    expect(await d.service.push()).toMatchObject({ status: 'saved' });
+    expect(remote(gh)!.receipts).toHaveLength(1);
+
+    gh.setRemote(KEY, '{}');
+    await d.service.push({ verify: true });
+    const gate = deferred();
+    gh.hooks.beforeCommit = async () => {
+      gh.hooks.beforeCommit = undefined;
+      await add(d.repo, '2026-09-25');
+      gate.resolve();
+    };
+    const p0 = appPuts(gh).length;
+    // 上書きの送信中に足した記録は、同じ上書きの処理の中で送り直される（§4.2 の周回。I6）
+    expect(await d.service.overwriteRemote()).toMatchObject({ status: 'saved' });
+    await gate.promise;
+    expect(appPuts(gh)).toHaveLength(p0 + 2);
+    expect(remote(gh)!.receipts).toHaveLength(2);
+    expect(await state(d.gate)).toMatchObject({ needs: false });
+  });
+
+  it('recordRemoteChanged は、比べた sha と違う・pendingPush がある・世代が違う・エラーがある とき何も書かない', async () => {
+    const { d } = await savedDevice();
+    const { lineage: L } = await d.gate.read();
+    expect(await d.gate.recordRemoteChanged(L.generation, 'other-sha', 'x')).toBe(false);
+    expect(await d.gate.recordRemoteChanged('other-gen', L.lastPushedSha, 'x')).toBe(false);
+    await add(d.repo, '2026-09-26');
+    expect(await d.gate.beginPush(L.generation, { writeId: uuid(900), revision: 9, bodySha256: 'h' }, NOW)).toBe(true);
+    expect(await d.gate.recordRemoteChanged(L.generation, L.lastPushedSha, 'x')).toBe(false);
+    expect(await d.gate.clearPending(L.generation, uuid(900))).toBe(true);
+    expect(await d.gate.recordPushError(L.generation, uuid(900), 'network', false)).toBe(false);
+    expect(await d.gate.recordRemoteChanged(L.generation, L.lastPushedSha, 'x')).toBe(true);
+    expect(await d.gate.recordRemoteChanged(L.generation, L.lastPushedSha, 'y')).toBe(false);
+    expect((await d.gate.read()).lineage).toMatchObject({ errorKind: 'conflict', lastErrorMessage: 'x' });
+  });
+
+  it('確かめの GET を止めている間、送信は待たずに見送り、今すぐ保存・上書き・設定の保存・復元はロックを放すまで始まらない（fa528e7f P2-2）', async () => {
+    const { gh, d } = await savedDevice();
+    const hold = deferred();
+    const entered = deferred();
+    gh.hooks.onRequest = async (req) => {
+      if (req.method === 'GET') {
+        gh.hooks.onRequest = undefined;
+        entered.resolve();
+        await hold.promise;
+      }
+      return undefined;
+    };
+    const verifying = d.service.push({ verify: true });
+    await entered.promise;
+    const n0 = gh.requests.length;
+    const before = await state(d.gate);
+    expect(await d.service.push()).toEqual({ kind: 'skipped', reason: 'busy' });
+    const waiting = [d.service.retryNow(), d.service.overwriteRemote(), d.service.saveConfig(TARGET, 'github_pat_OTHER')];
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gh.requests.length).toBe(n0);
+    expect(await state(d.gate)).toEqual(before);
+    hold.resolve();
+    expect(await verifying).toMatchObject({ status: 'saved' });
+    await Promise.all(waiting);
+    expect(gh.requests.length).toBeGreaterThan(n0);
+  });
+});
+
+describe('改訂 6: Web Locks は必須（§3・§7）', () => {
+  it('Web Locks も試験用の排他も無ければ、送信・確かめ・今すぐ保存・上書き・設定の保存・復元は GitHub にも系譜にも書かない', async () => {
+    const gh = fakeGitHub();
+    const opened = await openRepo({ dbName: 'kome', newId: idSource().next });
+    if (opened.kind !== 'ok') throw new Error();
+    vi.resetModules();
+    const fresh = await import('../src/backup/service');
+    const service = fresh.createBackupService({
+      gate: opened.lineage,
+      appVersion: 't',
+      newId: idSource(5000).next,
+      now: () => NOW,
+      client: (token) => createGitHubClient({ token, fetch: gh.fetch, now: () => NOW }),
+    });
+    const before = await state(opened.lineage);
+    expect(await service.saveConfig(TARGET, TOKEN)).toBe(false);
+    await add(opened.repo);
+    expect(await service.push({ verify: true })).toEqual({ kind: 'skipped', reason: 'busy' });
+    expect(await service.retryNow()).toEqual({ kind: 'skipped', reason: 'busy' });
+    expect(await service.overwriteRemote()).toEqual({ kind: 'skipped', reason: 'busy' });
+    expect(gh.requests).toHaveLength(0);
+    const after = await state(opened.lineage);
+    expect({ ...after, dataRevision: 0, needs: false, status: 'unset' }).toEqual({ ...before, needs: false, status: 'unset' });
+    const { hasWebLocks } = await import('../src/backup/lock');
+    expect(hasWebLocks()).toBe(false);
   });
 });
 

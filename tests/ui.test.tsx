@@ -74,7 +74,7 @@ function fakeActions(over: Partial<KomeActions> = {}): KomeActions {
     update: never,
     remove: never,
     saveConfig: async () => true,
-    retryNow: async () => {},
+    retryNow: async () => true,
     overwriteRemote: async () => {},
     previewFromGitHub: never,
     previewFromFile: never,
