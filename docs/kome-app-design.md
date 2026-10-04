@@ -1,11 +1,19 @@
 # Kome-app 設計書: 米の受取記録・予測・GitHub 自動バックアップ（PWA）
 
-- 状態: **改訂 5（購入と残り。作り直し）は設計検収 合格（2026-10-04、608f05e6）・実装検収 合格（2026-10-04、5ccf9d1e）・v1.1.0 で配信**。改訂 4 まで設計検収 合格（2026-10-01、改訂 3）・成立性確認済み（§8。ブラウザから PAT 付きの通し確認も 2026-10-01 合格）。U1 実装検収 合格、U2 の実装に着手
-- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]／改訂 3: 2026-10-01 [claude]／改訂 5: 2026-10-04 [claude]
+- 状態: **改訂 6（バックアップの外からの書き換えの検出・上書きの送り直し・Web Locks 必須）は設計検収待ち**。改訂 5（購入と残り。作り直し）は設計検収 合格（2026-10-04、608f05e6）・実装検収 合格（2026-10-04、5ccf9d1e）・v1.1.0 で配信**。改訂 4 まで設計検収 合格（2026-10-01、改訂 3）・成立性確認済み（§8。ブラウザから PAT 付きの通し確認も 2026-10-01 合格）。U1 実装検収 合格、U2 の実装に着手
+- 作成: 2026-09-30 [claude]／改訂 1・改訂 2: 2026-09-30 [claude]／改訂 3: 2026-10-01 [claude]／改訂 5・改訂 6: 2026-10-04 [claude]
 - 範囲: 初版 v1.0.0 の全体（データ基盤／集計・予測／GitHub 自動バックアップと復元／自動アップデート／カレンダー書き出し／集計グラフ）
 - 範囲外: UI の見た目（設計の合格後に Claude Design へ依頼する。本書は画面の「中身と振る舞い」だけ決める）、家にある量の管理（消費の手入力）。※「購入した量のうち、まだ受け取っていない量」は改訂 5 で範囲に入れた（§10。端末の中だけ）、複数端末・家族での共有、Web Push 通知、Swift 版
 
 ### 改訂の変更点
+
+**改訂 6**（2026-10-04。ユーザーの依頼「バックアップの弱点も直してください」。弱点は改訂 5 の設計検収 52faa0dd で見つかった既存の振る舞い）
+
+| 弱点 | 反映先 |
+|---|---|
+| 端末に変更が無いと送信は GitHub を見ないので、外から書き換えられても気づかず「保存済み」のまま（Codex の再現試験あり） | §4.5「GitHub の確かめ」を新設: 起動・前面復帰（10 分に 1 回まで）・「今すぐ保存」で、送る必要がなくても GET して `lastPushedSha` と比べ、違えば `conflict`。関所に `recordRemoteChanged` を追加（I7・I14・§4.2・§4.4・§5・§9） |
+| 「端末の内容で上書き」は sha を取り込むだけで、端末に変更が無いと送り直さない | §4.3: 上書きでは `adoptRemoteSha` が `lastPushedRevision = null` にして必ず全件を送る（§4.4） |
+| Web Locks の無い環境では代わりの排他が同じページの中だけで効き、別タブ間で送信・照合が重なりうる | GitHub へ書く操作・確かめ・復元・設定の保存は Web Locks を必須にし、無ければ行わない（§3・§7・§8）。同じページの中だけの代わりの排他は試験でだけ使う |
 
 **改訂 5**（2026-10-04。ユーザーの依頼「購入数（何キロ）を記録して、ホームの『これまで』の下に残り何キロと表示」。回答: 残り＝**まだ受け取っていない量**、来年の購入は**購入日から数え直す**、購入の記録は **iPhone の中だけ**（バックアップに含めない））
 
@@ -94,7 +102,7 @@
 | I4 | 累計 kg・残り・経過日数・予測・集計は保存しない。毎回、記録から計算する |
 | I5 | GitHub 上の `kome-backup.json` は、常に「ある時点の端末データ全体」の完全な写し（1 ファイル 1 回の PUT で置き換え。部分書き込みをしない） |
 | I6 | 古い写しが新しい写しを上書きしない。同じ世代の中で `lastPushedRevision` は増える方向にしか変わらず、送信中に端末が変われば送り直す |
-| I7 | GitHub 上のファイルを確認なしに上書きしてよいのは、(a) sha がこの世代の `lastPushedSha` と一致するとき、または (b) GET した本文の SHA-256 がこの世代の `pendingPush.bodySha256` と完全一致するとき（＝自分が送った写しそのもの）だけ。`deviceId` や `revision` の値は判定に使わない。それ以外はユーザーの確認を取る |
+| I7 | GitHub 上のファイルが外から書き換えられたことは、送信のとき（sha の照合）と確かめのとき（§4.5。起動・前面復帰・今すぐ保存）に検出し、`conflict` にする。GitHub 上のファイルを確認なしに上書きしてよいのは、(a) sha がこの世代の `lastPushedSha` と一致するとき、または (b) GET した本文の SHA-256 がこの世代の `pendingPush.bodySha256` と完全一致するとき（＝自分が送った写しそのもの）だけ。`deviceId` や `revision` の値は判定に使わない。それ以外はユーザーの確認を取る |
 | I8 | 復元は、確認した時点の端末 `dataRevision`・系譜の世代・（GitHub からなら）blob sha が、確定直前も変わっていないときだけ行う。全件入れ替え・`preRestoreSnapshot`・`dataRevision`・系譜の更新を 1 トランザクションで行う |
 | I9 | `validateBackup` を通らないバックアップ（自分より新しい `schemaVersion`、外枠の不正、1 件でも不正な記録、ID の重複）は、1 件も適用せず拒否する |
 | I10 | GitHub トークンは `Authorization` ヘッダで `api.github.com` へ送る以外に端末の外へ出さない（バックアップ JSON・書き出しファイル・URL・ログ・エラー表示に含めない） |
@@ -183,7 +191,7 @@ type Lineage = {
 | バックアップ設定 | 設定画面 → 関所の `saveConfig` 操作（Web Lock 内。§4.4） |
 | DB の版上げ（将来のアプリ更新） | `openDB('kome', KNOWN_DB_VERSION)` の `upgrade` の中だけ。版ごとの移行関数を順に当てる。他のタブが開いていれば `blocked`／`versionchange` で古い側は DB を閉じ、I11 の条件を満たした時点で再読み込み |
 | 新しい DB を古いアプリで開く | `openDB` が `VersionError` で失敗する。これを捕まえて停止モード（I13）に入り、DB を読まない・書かない。`registration.update()` を呼んで新しいアプリの取得を促す。DB の版が同じでも `meta.app.schemaVersion` が知らない値なら同じく停止モード |
-| 別のタブ・ホーム画面版と Safari 版の同時起動（PWA の抜け道） | 端末内の書き込みは IndexedDB のトランザクションで直列化される。GitHub への書き込み・復元・設定の保存・衝突の解決は Web Lock `kome-backup` で 1 つに絞る。さらに関所が世代と `writeId` を比べるので、ロックの外から来た古い結果も書かれない（I14）。変更後に `BroadcastChannel('kome')` で他タブへ知らせ、他タブは読み直す。※ iOS のホーム画面版と Safari 版は保存領域が別なので、互いのデータは見えない（§8） |
+| 別のタブ・ホーム画面版と Safari 版の同時起動（PWA の抜け道） | 端末内の書き込みは IndexedDB のトランザクションで直列化される。GitHub への書き込み・確かめ・復元・設定の保存・衝突の解決は Web Lock `kome-backup` で 1 つに絞る。**Web Locks（`navigator.locks`）が無い環境では、これらを行わない**（改訂 6。同じページの中だけで効く代わりの排他は、別タブ間を守れないので本番では使わない。試験の Node でだけ明示して使う）。さらに関所が世代と `writeId` を比べるので、ロックの外から来た古い結果も書かれない（I14）。変更後に `BroadcastChannel('kome')` で他タブへ知らせ、他タブは読み直す。※ iOS のホーム画面版と Safari 版は保存領域が別なので、互いのデータは見えない（§8） |
 | Service Worker | アプリ本体のキャッシュだけを扱い、IndexedDB に触らない |
 | GitHub 側での手編集・別端末からの書き込み | 端末へは自動で取り込まない。次の保存で sha が合わなくなったときに §4 の衝突として扱う（I7） |
 | 試験用の入口 | `repo`・関所・`backup` を `fake-indexeddb` と差し替えた `fetch` の上で直接呼ぶ。本番コードに試験専用の書き込み口は作らない |
@@ -231,7 +239,7 @@ type Lineage = {
 ### 4.2 1 回の送信（`backup.push`）
 
 1. Web Lock `kome-backup` を取る（取れなければ、実行中の処理に任せて終わる）
-2. 系譜を読む（= L）。`config` が null、止める種類の `errorKind` がある、`retryAfter` が未来、`needsPush` が偽 → 10 へ
+2. 系譜を読む（= L）。`config` が null、止める種類の `errorKind` がある、`retryAfter` が未来 → 10 へ。`needsPush` が偽 → 確かめの依頼があれば §4.5 を行い、どちらでも 10 へ
 3. **残った `pendingPush` の照合**（L.`pendingPush` があるとき。前回の送信が、届いたかどうか分からないまま終わった）: GET する
    - GET が成功し、本文の SHA-256 = `pendingPush.bodySha256` → 届いていた。関所 `recordPushLanded(L.generation, writeId, GET の sha)`
    - GET が成功し、sha = L.`lastPushedSha` → 届いていなかった。関所 `clearPending(L.generation, writeId)`
@@ -261,8 +269,22 @@ type Lineage = {
 
 `conflict` のとき、ホームと設定に「GitHub 側に、この端末が送っていないデータがあります」と出し、GET した内容の件数・累計 kg・最終受取日と、端末の同じ値を並べて見せる。
 
-- 「端末の内容で上書き」: Web Lock 内で GET の sha を取り直し、関所 `adoptRemoteSha(generation, sha)`（`lastPushedSha = sha`、`errorKind = null`、`pendingPush = null`、`lastPushedRevision` はそのまま）→ §4.2 の 2 から送る。確認画面に「上書き前の内容は GitHub の履歴に残る」ことを書く
+- 「端末の内容で上書き」: Web Lock 内で GET の sha を取り直し、関所 `adoptRemoteSha(generation, sha)`（`lastPushedSha = sha`、`errorKind = null`、`pendingPush = null`、**`lastPushedRevision = null`**＝端末に変更が無くても必ず全件を送る。改訂 6）→ §4.2 の 2 から送る。GET が 404 なら sha は null（sha を省いた新規作成）。確認画面に「上書き前の内容は GitHub の履歴に残る」ことを書く
 - 「GitHub から復元」: §6.1 の復元手順へ
+
+### 4.5 GitHub の確かめ（改訂 6）
+
+端末に変更が無いとき（`needsPush` が偽）でも、GitHub のファイルが外から書き換えられていないかを確かめる。
+
+- **いつ**: 起動時の送信（§6 手順 7）・前面復帰（同じタブで直前の確かめから 10 分以上たったとき。回数を抑えるため）・「今すぐ保存」（いつでも）。記録の変更による送信（`needsPush` が真）は §4.2 の通常の送信で sha を照合するので、確かめは要らない。`online` のきっかけでは確かめない
+- **どこで**: §4.2 の 1 回の送信の中（Web Lock `kome-backup` の中）。手順 2 で `needsPush` が偽のときだけ行う
+- **手順**: L.`lastPushedSha` を S として控え、GET する
+  - 200 で sha = S → 何もしない（保存済み）
+  - 200 で sha ≠ S、または 404 で S が null でない（外で消された）→ 関所 `recordRemoteChanged(L.generation, S)` → `conflict`。§4.3 の衝突の解決へ（上書きは改訂 6 で必ず全件を送り直す）
+  - 404 で S が null → `needsPush` が偽なのに S が null になるのは、関所の外の書き換えが無い限り起きない。何もしない
+  - GET の失敗（`network`・`rate-limit`・`auth`・`config`・`invalid`）→ **系譜に何も書かない**（確かめられなかっただけで、端末の送信実績は変わらない。`writeId` を持たないエラー操作を置かない I14 の方針どおり）。「今すぐ保存」からのときは、画面に「GitHub と確かめられませんでした（通信を確かめてください）」を出す
+- **関所** `recordRemoteChanged` は、`writeId` の代わりに「`pendingPush` が null」かつ「`lastPushedSha` が比べた S のまま」を確かめる。確かめの GET の間に別の送信・設定の変更・復元が入っていれば S が変わるか世代が変わるので書かない（古い確かめの結果を新しい状態へ入れない。I14 と同じ守り）
+- **読み取りの費用**: GET 1 回（数 KB）。前面復帰は 10 分に 1 回までなので、GitHub の上限（1 時間 5000 回）に対して十分小さい
 
 ### 4.4 系譜の関所（`src/backup/lineage.ts`）
 
@@ -277,7 +299,8 @@ type Lineage = {
 | `resetRemote(gen, writeId)` | 世代と `writeId` の一致 | `lastPushedSha = null`、`pendingPush = null` | §4.2 手順 7 |
 | `recordPushError(gen, writeId, kind, keepPending, retryAfter?)` | 世代の一致、かつ `pendingPush?.writeId === writeId`（照合・送信の結果に限る。`writeId` を持たないエラー操作は置かない） | `errorKind`、`retryAfter`、`lastErrorMessage`、`keepPending` が偽なら `pendingPush = null` | §4.2 |
 | `clearErrorForRetry(gen)` | Web Lock 内。世代の一致 | `errorKind = null`、`retryAfter = null`（`pendingPush`・sha・revision は触らない） | 「今すぐ保存」（§4.0） |
-| `adoptRemoteSha(gen, sha \| null)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`（null ならファイルが無い）、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
+| `adoptRemoteSha(gen, sha \| null)` | Web Lock 内。世代の一致 | `lastPushedSha = sha`（null ならファイルが無い）、`lastPushedRevision = null`（改訂 6。必ず送り直す）、`pendingPush = null`、`errorKind = null`、`retryAfter = null` | §4.3 |
+| `recordRemoteChanged(gen, comparedSha)` | Web Lock 内。世代の一致、`pendingPush` が null、`lastPushedSha` が比べた値 `comparedSha` と同じ、`errorKind` が null（改訂 6） | `errorKind = 'conflict'`、`lastErrorMessage`（どちらかが一致しなければ何も書かない＝確かめの後に送信・設定・復元が入った古い結果を書かない） | §4.5 |
 | `restore(expected, backup, source)` | Web Lock 内。世代の一致、`dataRevision` = 確認時の D0 | §6.1 手順 3 のとおり（記録の全件入れ替えを含む） | §6.1 |
 | `undoRestore(gen)` | Web Lock 内。世代の一致、`preRestoreSnapshot` がある | 記録を戻し、スナップショットを消し、`dataRevision` +1、`pendingPush = null`、`errorKind = null`、`retryAfter = null`（系譜の sha・revision はそのまま → `needsPush` になり、次の送信で GitHub も取り消し後の内容になる。取り消し前の GitHub の内容は git の履歴に残る） | 設定画面 |
 
@@ -301,6 +324,9 @@ type Lineage = {
 | 復元の確認画面を出したあと、別タブで記録・設定が変わった／GitHub が変わった | 端末・GitHub は変わったまま | 確定時の再確認で不一致 → 置き換えずに再プレビューへ戻る | 古い確認で置き換えない（I8） |
 | 復元トランザクションの確定前に落ちた | 端末は復元前のまま（丸ごと取り消し） | もう一度復元できる | 半端な入れ替えにならない（I8） |
 | ネット不通で `pendingPush` が残ったまま JSON から復元した | 復元で `pendingPush` が消え、`needsPush` | 復元後のデータを新しい送信として送る | 復元前の送信結果を復元後の保存実績にしない（P1-3） |
+| 確かめ（§4.5）の GET の応答待ちに、別タブで送信・設定の変更・復元が入った | 系譜の `lastPushedSha` か世代が変わる | 確かめの結果を `recordRemoteChanged` に渡しても、比べた S と違うので何も書かない | 古い確かめで `conflict` にしない |
+| 確かめの GET が失敗（ネット不通など） | 何も変わらない | 次のきっかけでまた確かめる。「今すぐ保存」なら画面に知らせる | 保存済みの表示は変えない（確かめられなかっただけ） |
+| 外で書き換えられた後、利用者が「端末の内容で上書き」 | `adoptRemoteSha` で `lastPushedRevision = null`（→ `needsPush`） | 全件を新しい sha で送る。端末に変更が無くても送る | GitHub が端末の内容に戻る |
 | GitHub から復元した後 | 新しいデータ、`preRestoreSnapshot`、`lastPushedSha = S0`、`lastPushedRevision = D0 + 1` | 保存済み。次の変更から通常どおり送る | 取り消しは `undoRestore` で可能 |
 | Service Worker の更新途中 | 旧版のアプリ本体がキャッシュに残る | 次回の起動・前面復帰で更新を再確認 | データに影響なし |
 | DB の版上げ（将来）の途中で落ちた | IndexedDB の版上げは 1 トランザクションなので旧版のまま | 次の起動で版上げをやり直す | 半端な移行にならない |
@@ -398,7 +424,7 @@ reloading ──（ページが読み込み直される。以後の予約・再�
 ## 7. 並行・順序
 
 - **端末内の書き込み**: IndexedDB が readwrite トランザクションを直列化する。`dataRevision` の +1 は読み取りと書き込みを同じトランザクションで行うので、同時に 2 つ来ても番号が飛んだり重なったりしない
-- **GitHub への送信・復元・設定の保存・衝突の解決**: どれも Web Lock `kome-backup` を取ってから行う。同時に 1 つだけ
+- **GitHub への送信・確かめ・復元・設定の保存・衝突の解決**: どれも Web Lock `kome-backup` を取ってから行う。同時に 1 つだけ。Web Locks が無い環境では行わない（`busy` と同じく何もしない。設定画面に「このブラウザでは GitHub へのバックアップを使えません」を出す。改訂 6）
 - **ロックをすり抜けた古い結果**: Web Lock が効かない場合（ロックの外で走った古いタブの処理など）に備え、系譜の書き換えは関所で世代と `writeId` を比べる（I14）。ロックと関所の二重の守り
 - **送信中に端末が変わる**: `lastPushedRevision = R`（送ったときの番号）にするので `needsPush` が残り、送り直す（I6）
 - **復元の確認中に別タブで変更**: 確定時に D0・G0 と比べて検出し、置き換えない（§6.1 手順 3）
@@ -419,6 +445,8 @@ reloading ──（ページが読み込み直される。以後の予約・再�
   - `.ics`（iOS シミュレータ iPhone 17 Pro・iOS 26.5、ホーム画面に追加した版で `display-mode: standalone` を確認）: **Blob を `<a download>` でダウンロードさせる方式で、カレンダーの追加画面が直接開き、終日の予定と「3 日前」の通知が読み込まれた**。この方式を採用する（実機は未確認。初回の実機利用で確かめる）
 - **購入の記録はバックアップしない**（改訂 5）: 機種変更・ホーム画面に追加し直した後は、復元のあと設定画面で購入の量と購入日を入れ直す。Safari 版とホーム画面版でも別々
 - GET の 404 はリポジトリが見えない場合とファイルが無い場合を区別できない（§4.1）。「ファイルが無い」と読むのは §4.2 の限られた箇所だけで、続く PUT の 404 で `config` として表面化する
+- **外からの書き換えの検出は確かめのときだけ**（改訂 6）: 起動・前面復帰（10 分に 1 回まで）・「今すぐ保存」の間に外で書き換えられても、次の確かめまでは「保存済み」のまま。確かめの GET が失敗したときも系譜は変えない（通信できるようになった次の確かめで分かる）
+- **Web Locks は必須**（改訂 6）: iOS Safari は 15.4 から対応（利用者の端末は iOS 26）。無い環境では GitHub へのバックアップを行わない（端末の記録・JSON の書き出しは使える）
 - 予測は「最近の購入ペースが続く」前提の単純な計算。長期の不在・来客などは反映しない
 - 未知のフィールドはバックアップで保持しない（形式を書くのがこのアプリだけのため）
 - GitHub 側の履歴はコミットごとに増える（1 回 数 KB × 変更回数。年に数十回の想定で問題なし）
@@ -524,3 +552,15 @@ reloading ──（ページが読み込み直される。以後の予約・再�
 | 保存・消去を押す | 待機。待機中は量・購入日の欄、保存・消す、「今の記録に戻す」をすべて操作できない。待機中に他タブの変更が来ても下書きは変えない（同じ値になれば終わりの規則だけが働く）。成功: 下書き = null（自分の読み直しで `latest` が保存した値になっている）。失敗: 下書きを残しエラーを出す |
 
 - **古い版との共存**: DB の版・`schemaVersion`・バックアップの形式を変えないので、古い版は購入の記録を読まずに今までどおり動く（消しもしない）。並行も記録と同じく IndexedDB のトランザクションで直列化される（§7 と同じ。新しい並行の筋は無い）
+
+### 9.2 改訂 6 の試験（予定）
+
+| 不変条件・振る舞い | 試験（予定） |
+|---|---|
+| I7・§4.5 確かめ | 保存済み → 偽の GitHub に外から書く → 端末無変更で、確かめ付きの送信（起動・「今すぐ保存」）→ `conflict`、PUT しない。確かめ無しの送信（記録の変更によるもの以外の通常の呼び出し）では GET しない。外で消された（404 で `lastPushedSha` あり）→ `conflict`。sha が同じ → 何も書かない |
+| §4.5 確かめの失敗 | GET がネット不通・429・401 → 系譜は変わらず保存済みのまま。「今すぐ保存」の戻り値で確かめられなかったことが分かる |
+| I14・`recordRemoteChanged` | 比べた S と今の `lastPushedSha` が違う・`pendingPush` がある・世代が違う・既に `errorKind` がある → 何も書かない |
+| §4.5 前面復帰の回数 | 前面復帰が 10 分以内に続いても GET は 1 回。10 分を過ぎたら次の前面復帰で確かめる（時刻を差し替えて試す） |
+| §4.3 上書きの送り直し | 外で書き換えられて `conflict` → 端末無変更のまま「端末の内容で上書き」→ PUT が 1 回走り、GitHub が端末の内容になる。外で消されていたら sha を省いた新規作成 |
+| §3・§7 Web Locks 必須 | `navigator.locks` が無く試験用の排他も有効にしていないとき、送信・確かめ・復元・設定の保存・上書きは GitHub にも系譜にも書かない。試験の Node では setup で試験用の排他を明示して有効にする |
+| 52faa0dd の再現 | Codex の再現試験（保存完了 → 外部上書き → 端末無変更の `push`／`retryNow` が保存済みを返す → `overwriteRemote` でも外部本文が残る）が、改訂 6 では `conflict` → 上書きで端末の内容に戻る、になる |
