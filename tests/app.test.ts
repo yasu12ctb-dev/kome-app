@@ -64,17 +64,39 @@ describe('送信のきっかけ（§4.0・U3 の必須試験）', () => {
   it('前面復帰の確かめは、直前の確かめ（起動時を含む）から 10 分以上たったときだけ（§4.5）', () => {
     const s = { notifyChange: vi.fn(), triggerNow: vi.fn(), dispose: vi.fn() };
     let t = 1_000_000;
-    const detach = attachPushTriggers(s, window, { now: () => t, verifiedAt: t });
+    let verified = t; // 起動時に確かめられた
+    const detach = attachPushTriggers(s, window, { now: () => t, lastVerified: () => verified });
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     const visible = () => document.dispatchEvent(new Event('visibilitychange'));
+    const verifies = () => s.triggerNow.mock.calls.map((c) => (c[0] as { verify?: boolean } | undefined)?.verify === true);
     t += 9 * 60 * 1000;
     visible();
     t += 60 * 1000;
-    visible();
+    visible(); // 10 分たった → 確かめを頼む。確かめられたら時刻が進む
+    verified = t;
     t += 60 * 1000;
     visible();
     window.dispatchEvent(new Event('online'));
-    expect(s.triggerNow.mock.calls.map((c) => (c[0] as { verify?: boolean } | undefined)?.verify === true)).toEqual([false, true, false, false]);
+    expect(verifies()).toEqual([false, true, false, false]);
+    detach();
+  });
+
+  it('「今すぐ保存」で確かめた後 10 分未満の前面復帰では確かめない。確かめられなかった（見送り・失敗）なら次の前面復帰で確かめる（実装検収 8eda45e5）', () => {
+    const s = { notifyChange: vi.fn(), triggerNow: vi.fn(), dispose: vi.fn() };
+    let t = 0;
+    let verified = 0;
+    const detach = attachPushTriggers(s, window, { now: () => t, lastVerified: () => verified });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    const visible = () => document.dispatchEvent(new Event('visibilitychange'));
+    t = 9 * 60 * 1000;
+    verified = t; // 今すぐ保存で確かめられた
+    t += 60 * 1000;
+    visible();
+    t += 10 * 60 * 1000;
+    visible(); // 確かめを頼んだが、見送り・失敗で確かめられなかった（verified は進まない）
+    t += 60 * 1000;
+    visible();
+    expect(s.triggerNow.mock.calls.map((c) => (c[0] as { verify: boolean }).verify)).toEqual([false, true, true]);
     detach();
   });
 

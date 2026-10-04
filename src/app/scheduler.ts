@@ -81,17 +81,17 @@ export function createPushScheduler(deps: SchedulerDeps): PushScheduler {
 export const VERIFY_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
- * 前面復帰と online で送る。前面復帰では、直前の確かめ（起動時を含む）から 10 分以上たっていれば GitHub も確かめる。
- * 起動時の確かめは呼び出し側が triggerNow({ verify: true }) で行い、その時刻を verifiedAt に渡す。戻り値で外す
+ * 前面復帰と online で送る。前面復帰では、直前に GitHub を確かめられた時刻（起動・今すぐ保存・前面復帰のどれでも。
+ * 送信中で見送った・GET が失敗したときは数えない）から 10 分以上たっていれば確かめる（§4.5）。戻り値で外す
  */
-export function attachPushTriggers(scheduler: PushScheduler, win: Window, clock: { now: () => number; verifiedAt: number } = { now: () => Date.now(), verifiedAt: Date.now() }): () => void {
-  let lastVerify = clock.verifiedAt;
+export function attachPushTriggers(
+  scheduler: PushScheduler,
+  win: Window,
+  clock: { now: () => number; lastVerified: () => number } = { now: () => Date.now(), lastVerified: () => Date.now() },
+): () => void {
   const onVisible = () => {
     if (win.document.visibilityState !== 'visible') return;
-    const t = clock.now();
-    const verify = t - lastVerify >= VERIFY_INTERVAL_MS;
-    if (verify) lastVerify = t;
-    scheduler.triggerNow({ verify });
+    scheduler.triggerNow({ verify: clock.now() - clock.lastVerified() >= VERIFY_INTERVAL_MS });
   };
   const onOnline = () => scheduler.triggerNow();
   win.document.addEventListener('visibilitychange', onVisible);

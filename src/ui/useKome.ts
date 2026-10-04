@@ -102,7 +102,9 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
       }
       repoRef.current = opened.repo;
       gateRef.current = opened.lineage;
-      const service = createBackupService({ gate: opened.lineage, appVersion: APP_VERSION });
+      // 同じタブで GitHub を確かめられた時刻（§4.5。起動時はまだ確かめていない）
+      let lastVerified = Number.NEGATIVE_INFINITY;
+      const service = createBackupService({ gate: opened.lineage, appVersion: APP_VERSION, onVerified: (at) => (lastVerified = at) });
       serviceRef.current = service;
       const scheduler = createPushScheduler({
         push: async (opts) => {
@@ -112,7 +114,7 @@ export function useKome(coordinator: ReloadCoordinator): { state: KomeState; act
       });
       schedulerRef.current = scheduler;
       channelRef.current = createChangeChannel(() => void refresh());
-      const detachTriggers = attachPushTriggers(scheduler, window, { now: () => Date.now(), verifiedAt: Date.now() });
+      const detachTriggers = attachPushTriggers(scheduler, window, { now: () => Date.now(), lastVerified: () => lastVerified });
       const onVisible = () => {
         if (document.visibilityState === 'visible') void refresh();
       };

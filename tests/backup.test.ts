@@ -820,8 +820,45 @@ describe('改訂 6: GitHub の確かめ（§4.5）・上書きの送り直し（
     expect((await d.gate.read()).lineage).toMatchObject({ errorKind: 'conflict', lastErrorMessage: 'x' });
   });
 
+  it('確かめられた時刻は GET の応答を得たときだけ知らせる（見送り・失敗では知らせない。8eda45e5）', async () => {
+    const gh = fakeGitHub();
+    const opened = await openRepo({ dbName: 'kome', newId: idSource().next });
+    if (opened.kind !== 'ok') throw new Error();
+    const at: number[] = [];
+    const service = createBackupService({
+      gate: opened.lineage,
+      appVersion: 't',
+      newId: idSource(7000).next,
+      now: () => NOW,
+      onVerified: (t) => at.push(t),
+      client: (token) => createGitHubClient({ token, fetch: gh.fetch, now: () => NOW }),
+    });
+    await service.saveConfig(TARGET, TOKEN);
+    await add(opened.repo);
+    await service.push();
+    expect(at).toEqual([]); // 送信（確かめではない）
+    expect(await service.retryNow()).toMatchObject({ status: 'saved' });
+    expect(at).toEqual([NOW.getTime()]);
+    gh.hooks.onRequest = () => new Response('{}', { status: 429 });
+    expect(await service.push({ verify: true })).toMatchObject({ kind: 'verify-failed' });
+    expect(at).toHaveLength(1);
+    gh.hooks.onRequest = undefined;
+    const hold = deferred();
+    gh.hooks.onRequest = async (req) => {
+      if (req.method === 'GET') await hold.promise;
+      return undefined;
+    };
+    const first = service.push({ verify: true });
+    expect(await service.push({ verify: true })).toEqual({ kind: 'skipped', reason: 'busy' });
+    hold.resolve();
+    await first;
+    expect(at).toHaveLength(2);
+  });
+
   it('確かめの GET を止めている間、送信は待たずに見送り、今すぐ保存・上書き・設定の保存・復元はロックを放すまで始まらない（fa528e7f P2-2）', async () => {
     const { gh, d } = await savedDevice();
+    const preview = await d.service.previewRestoreFromGitHub();
+    if (preview.kind !== 'ok') throw new Error(preview.kind);
     const hold = deferred();
     const entered = deferred();
     gh.hooks.onRequest = async (req) => {
@@ -837,7 +874,8 @@ describe('改訂 6: GitHub の確かめ（§4.5）・上書きの送り直し（
     const n0 = gh.requests.length;
     const before = await state(d.gate);
     expect(await d.service.push()).toEqual({ kind: 'skipped', reason: 'busy' });
-    const waiting = [d.service.retryNow(), d.service.overwriteRemote(), d.service.saveConfig(TARGET, 'github_pat_OTHER')];
+    const restoring = d.service.confirmRestore(preview.preview);
+    const waiting = [d.service.retryNow(), d.service.overwriteRemote(), d.service.saveConfig(TARGET, 'github_pat_OTHER'), restoring];
     await new Promise((r) => setTimeout(r, 20));
     expect(gh.requests.length).toBe(n0);
     expect(await state(d.gate)).toEqual(before);
@@ -845,6 +883,8 @@ describe('改訂 6: GitHub の確かめ（§4.5）・上書きの送り直し（
     expect(await verifying).toMatchObject({ status: 'saved' });
     await Promise.all(waiting);
     expect(gh.requests.length).toBeGreaterThan(n0);
+    // 復元はロックを待ってから始まり、確定直前に GitHub を確かめ直す（先に上書きが走って sha が変わっていれば changed）
+    expect(['ok', 'changed']).toContain((await restoring).kind);
   });
 });
 

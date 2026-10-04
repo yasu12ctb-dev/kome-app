@@ -16,6 +16,8 @@ export interface BackupServiceOptions {
   appVersion: string;
   newId?: () => string;
   now?: () => Date;
+  /** GitHub の確かめ（§4.5）で GET の応答を得たとき（確かめられたとき）に呼ぶ。前面復帰の 10 分の数え始めに使う */
+  onVerified?: (at: number) => void;
   /** 試験で GitHub を差し替える入口。本番では鍵から通常のクライアントを作る */
   client?: (token: string) => GitHubClient;
 }
@@ -85,6 +87,12 @@ export function createBackupService(options: BackupServiceOptions): BackupServic
     const g = await client.get(L.config);
     // 失敗は系譜に書かない（確かめられなかっただけ）
     if (g.kind === 'error') return { kind: 'verify-failed', errorKind: g.errorKind, message: g.message };
+    // 確かめられた（起動・今すぐ保存・前面復帰のどれからでも同じ時刻を数え始めにする）
+    try {
+      options.onVerified?.(now().getTime());
+    } catch (e) {
+      console.error('kome: 確かめの時刻の記録に失敗しました', e);
+    }
     if (g.kind === 'ok' && g.sha !== S) {
       await gate.recordRemoteChanged(L.generation, S, 'GitHub 側のファイルが、この端末の送った内容から変わっています');
     } else if (g.kind === 'not-found' && S !== null) {
