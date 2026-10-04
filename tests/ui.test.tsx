@@ -254,59 +254,161 @@ describe('購入の記録と残り（設計書 §10）', () => {
     expect(host.textContent).toContain('10,000 kg 以下');
   });
 
-  it('設定: 未編集のときにほかの画面で購入の記録が変わったら新しい値に合わせ、古い値を送らない（実装検収 74519483 P2-1）', async () => {
-    const onSave = vi.fn(async (i: { kg: number; date: string }) => ({ ok: true as const, purchase: { ...i, updatedAt: 'y' } }));
-    const onClear = async () => ({ ok: true as const, purchase: null });
-    const view = (purchase: { kg: number; date: string; updatedAt: string } | null) => <PurchaseSection purchase={purchase} today="2026-10-04" onSave={onSave} onClear={onClear} />;
-    await render(view({ kg: 240, date: '2026-10-01', updatedAt: 'a' }));
-    await act(async () => root!.render(view({ kg: 180, date: '2026-10-02', updatedAt: 'b' })));
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('180');
-    expect(host.querySelector<HTMLInputElement>('#purchase-date')!.value).toBe('2026-10-02');
-    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+  // 設計書 §10「設定の購入欄の状態」・§9.1。親（useKome）の代わりに、保存・消去が成功したら最新を差し替えてから応答する
+  type P = { kg: number; date: string; updatedAt: string } | null;
+  function harness(initial: P, opts: { today?: string } = {}) {
+    let latest: P = initial;
+    let today = opts.today ?? '2026-10-04';
+    let n = 0;
+    let gate: (() => void) | null = null;
+    let fail = false;
+    const view = () => <PurchaseSection purchase={latest} today={today} onSave={onSave} onClear={onClear} />;
+    const setLatest = async (v: P) => {
+      latest = v;
+      await act(async () => root!.render(view()));
+    };
+    const wait = () => (gate ? new Promise<void>((r) => (gate = r)) : Promise.resolve());
+    const onSave = vi.fn(async (i: { kg: number; date: string }) => {
+      await wait();
+      if (fail) return { ok: false as const, kind: 'failed' as const, message: 'x' };
+      latest = { ...i, updatedAt: `s${++n}` };
+      root!.render(view()); // 外側の act（ボタンを押す act）の中なので、入れ子の act を使わない
+      return { ok: true as const, purchase: latest };
+    });
+    const onClear = vi.fn(async () => {
+      await wait();
+      if (fail) return { ok: false as const, kind: 'failed' as const, message: 'x' };
+      latest = null;
+      root!.render(view());
+      return { ok: true as const, purchase: null };
+    });
+    return {
+      view,
+      onSave,
+      onClear,
+      setLatest,
+      setToday: async (t: string) => {
+        today = t;
+        await act(async () => root!.render(view()));
+      },
+      hold: () => {
+        gate = () => {};
+      },
+      release: async () => {
+        const g = gate as unknown as () => void;
+        gate = null;
+        await act(async () => g());
+      },
+      failNext: (v: boolean) => (fail = v),
+    };
+  }
+  const kgInput = () => host.querySelector<HTMLInputElement>('#purchase-kg')!;
+  const dateInput = () => host.querySelector<HTMLInputElement>('#purchase-date')!;
+  const isDirty = () => host.querySelector('[data-dirty="true"]') !== null;
+  const notice = () => host.textContent!.includes('ほかの画面で購入の記録が変わりました');
+  const P240 = { kg: 240, date: '2026-10-01', updatedAt: 'a' };
+
+  it('未編集なら、ほかの画面の変更・消去に追従し、古い値を送らない（74519483 P2-1）', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    await h.setLatest({ kg: 180, date: '2026-10-02', updatedAt: 'b' });
+    expect([kgInput().value, dateInput().value, isDirty()]).toEqual(['180', '2026-10-02', false]);
     expect(button('保存').disabled).toBe(true);
-    // ほかの画面で消された
-    await act(async () => root!.render(view(null)));
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('');
-    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
-    expect(onSave).not.toHaveBeenCalled();
+    await h.setLatest(null);
+    expect([kgInput().value, dateInput().value, isDirty()]).toEqual(['', '2026-10-04', false]);
+    expect(h.onSave).not.toHaveBeenCalled();
   });
 
-  it('設定: 編集中にほかの画面で変わったら入力を守って知らせ、「今の記録に戻す」で合わせられる', async () => {
-    const onSave = vi.fn(async (i: { kg: number; date: string }) => ({ ok: true as const, purchase: { ...i, updatedAt: 'y' } }));
-    const onClear = async () => ({ ok: true as const, purchase: null });
-    const view = (purchase: { kg: number; date: string; updatedAt: string } | null) => <PurchaseSection purchase={purchase} today="2026-10-04" onSave={onSave} onClear={onClear} />;
-    await render(view({ kg: 240, date: '2026-10-01', updatedAt: 'a' }));
-    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '300');
-    await act(async () => root!.render(view({ kg: 180, date: '2026-10-02', updatedAt: 'b' })));
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('300');
-    expect(host.textContent).toContain('ほかの画面で購入の記録が変わりました（今は 180kg・10月2日）');
-    expect(host.querySelector('[data-dirty="true"]')).not.toBeNull();
+  it('編集中にほかの画面で変わったら下書きを守ってお知らせし、「今の記録に戻す」で最新に合わせる', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '300');
+    await h.setLatest({ kg: 180, date: '2026-10-02', updatedAt: 'b' });
+    expect([kgInput().value, isDirty(), notice()]).toEqual(['300', true, true]);
+    expect(host.textContent).toContain('（今は 180kg・10月2日）');
     await act(async () => button('今の記録に戻す').click());
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('180');
-    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
-    expect(host.textContent).not.toContain('ほかの画面で');
+    expect([kgInput().value, dateInput().value, isDirty(), notice()]).toEqual(['180', '2026-10-02', false, false]);
   });
 
-  it('設定: 保存・消去の応答を待つ間は入力できず、応答で新しい入力が消えない（実装検収 74519483 P2-2）', async () => {
-    let finish!: () => void;
-    const onSave = vi.fn(
-      (i: { kg: number; date: string }) =>
-        new Promise<{ ok: true; purchase: { kg: number; date: string; updatedAt: string } }>((r) => (finish = () => r({ ok: true, purchase: { ...i, updatedAt: 'y' } }))),
-    );
-    let finishClear!: () => void;
-    const onClear = vi.fn(() => new Promise<{ ok: true; purchase: null }>((r) => (finishClear = () => r({ ok: true, purchase: null }))));
-    await render(<PurchaseSection purchase={{ kg: 240, date: '2026-10-01', updatedAt: 'a' }} today="2026-10-04" onSave={onSave} onClear={onClear} />);
-    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '300');
+  it('量・購入日を元の値に戻しても、最新と違えば未保存とお知らせが残り、保存できる（d5d79a1d）', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '300');
+    typeInto(dateInput(), '2026-09-30');
+    await h.setLatest({ kg: 180, date: '2026-10-02', updatedAt: 'b' });
+    typeInto(kgInput(), '240');
+    typeInto(dateInput(), '2026-10-01');
+    expect([kgInput().value, dateInput().value, isDirty(), notice()]).toEqual(['240', '2026-10-01', true, true]);
+    expect(button('保存').disabled).toBe(false);
     await act(async () => button('保存').click());
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(true);
-    expect(host.querySelector<HTMLInputElement>('#purchase-date')!.disabled).toBe(true);
-    await act(async () => finish());
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(false);
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('300');
+    expect(h.onSave).toHaveBeenLastCalledWith({ kg: 240, date: '2026-10-01' });
+    expect([kgInput().value, isDirty(), notice()]).toEqual(['240', false, false]);
+  });
+
+  it('下書きが最新と同じになったら終わり、その後の変更で古い下書きは生き返らない（47ea7d55）', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '180');
+    await h.setLatest({ kg: 180, date: '2026-10-01', updatedAt: 'b' });
+    expect([kgInput().value, isDirty(), notice()]).toEqual(['180', false, false]);
+    await h.setLatest({ kg: 120, date: '2026-10-01', updatedAt: 'c' });
+    expect([kgInput().value, isDirty(), notice()]).toEqual(['120', false, false]);
+    // 入力で最新と同じにしても終わる
+    typeInto(kgInput(), '130');
+    typeInto(kgInput(), '120');
+    expect(isDirty()).toBe(false);
+    await h.setLatest({ kg: 100, date: '2026-10-01', updatedAt: 'd' });
+    expect(kgInput().value).toBe('100');
+  });
+
+  it('終わった後にまた編集すると、そのときの最新を元にする（古いお知らせを出さない）', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '180');
+    await h.setLatest({ kg: 180, date: '2026-10-01', updatedAt: 'b' });
+    typeInto(kgInput(), '200');
+    expect([isDirty(), notice()]).toEqual([true, false]);
+  });
+
+  it('購入の記録が無いとき、購入日を触って今日に戻した後に 0 時を越えたら新しい今日に追従する', async () => {
+    const h = harness(null, { today: '2026-10-04' });
+    await render(h.view());
+    typeInto(dateInput(), '2026-10-01');
+    typeInto(dateInput(), '2026-10-04');
+    expect(isDirty()).toBe(false);
+    await h.setToday('2026-10-05');
+    expect([dateInput().value, isDirty()]).toEqual(['2026-10-05', false]);
+  });
+
+  it('保存・消去が失敗したら下書きとエラーが残り、成功で下書きが消える', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '300');
+    h.failNext(true);
+    await act(async () => button('保存').click());
+    expect([kgInput().value, isDirty()]).toEqual(['300', true]);
+    expect(host.textContent).toContain('保存できませんでした');
     await act(async () => button('消す').click());
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.disabled).toBe(true);
-    await act(async () => finishClear());
-    expect(host.querySelector<HTMLInputElement>('#purchase-kg')!.value).toBe('');
+    expect([kgInput().value, isDirty()]).toEqual(['300', true]);
+    expect(host.textContent).toContain('消せませんでした');
+    h.failNext(false);
+    await act(async () => button('消す').click());
+    expect([kgInput().value, isDirty()]).toEqual(['', false]);
+  });
+
+  it('待機中は欄・保存・消す・戻すが操作できず、待機中のほかの画面の変更で下書きは変わらない（74519483 P2-2）', async () => {
+    const h = harness(P240);
+    await render(h.view());
+    typeInto(kgInput(), '300');
+    await h.setLatest({ kg: 180, date: '2026-10-02', updatedAt: 'b' });
+    h.hold();
+    await act(async () => button('保存').click());
+    expect([kgInput().disabled, dateInput().disabled, button('保存').disabled, button('消す').disabled, button('今の記録に戻す').disabled]).toEqual([true, true, true, true, true]);
+    await h.setLatest({ kg: 150, date: '2026-10-02', updatedAt: 'c' });
+    expect(kgInput().value).toBe('300');
+    await h.release();
+    expect([kgInput().disabled, kgInput().value, isDirty()]).toEqual([false, '300', false]);
+    expect(h.onSave).toHaveBeenLastCalledWith({ kg: 300, date: '2026-10-01' });
   });
 
   it('ホーム: 残り・受け取りすぎ・購入の記録なしの表示', async () => {

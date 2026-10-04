@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { PurchaseResult } from '../data/repo';
 import type { Purchase, Receipt, Ymd } from '../data/types';
 import { remaining } from '../domain/stats';
@@ -40,54 +40,41 @@ export function PurchaseSection(props: {
   onClear: () => Promise<PurchaseResult>;
 }) {
   const p = props.purchase;
-  const toForm = (v: Purchase | null) => ({ kg: v ? kg(v.kg) : '', date: v?.date ?? props.today });
-  // 欄の元になった購入の記録（入力がこれと同じなら未編集）
-  const [base, setBase] = useState(() => toForm(p));
-  const [kgText, setKgText] = useState(base.kg);
-  const [date, setDate] = useState<string>(base.date);
+  // 状態は設計書 §10「設定の購入欄の状態」: 比べる相手は常に今の記録（latest）。持つのは下書きと待機だけ
+  const latestForm = { kg: p ? kg(p.kg) : '', date: p?.date ?? props.today };
+  const latestKey = p?.updatedAt ?? 'none';
+  const [draft, setDraft] = useState<{ kg: string; date: string; from: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  /** 編集中に、ほかの画面（別タブ）で購入の記録が変わった */
-  const [changedElsewhere, setChangedElsewhere] = useState(false);
-  // 元にした値と違えば未保存（自動アップデートの再読み込みを待たせる。I11）
-  const dirty = kgText !== base.kg || date !== base.date;
 
-  // ほかの画面で購入の記録が変わったとき: 未編集なら新しい値に合わせ、編集中なら入力を守って知らせる。
-  // 自分の保存・消去の待機中は、その結果で欄を合わせるのでここでは何もしない
-  useEffect(() => {
+  const sameAsLatest = (v: { kg: string; date: string }) => v.kg === latestForm.kg && v.date === latestForm.date;
+  // 下書きの終わり: 最新と同じになった下書きは捨てる（入力でも、ほかの画面の変更でも）。
+  // 描画中に確かめ、次の描画では下書きが無いので繰り返さない
+  const live = draft !== null && !sameAsLatest(draft) ? draft : null;
+  if (draft !== null && live === null) setDraft(null);
+  // 未保存（自動アップデートの再読み込みを待たせる。I11）・表示する値・お知らせはすべて計算で決める
+  const dirty = live !== null;
+  const shown = live ?? latestForm;
+  const changedElsewhere = live !== null && live.from !== latestKey;
+
+  function edit(field: 'kg' | 'date', value: string) {
     if (busy) return;
-    const next = toForm(p);
-    if (next.kg === base.kg && next.date === base.date) return;
-    if (!dirty) {
-      setBase(next);
-      setKgText(next.kg);
-      setDate(next.date);
-      setSaved(false);
-    } else {
-      setChangedElsewhere(true);
-    }
-    // 購入の記録が変わったときだけ見る
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p?.kg, p?.date, p?.updatedAt]);
-
-  function sync(v: Purchase | null) {
-    const next = toForm(v);
-    setBase(next);
-    setKgText(next.kg);
-    setDate(next.date);
-    setChangedElsewhere(false);
+    const next = { ...shown, [field]: value, from: live ? live.from : latestKey };
+    setDraft(sameAsLatest(next) ? null : next);
+    setSaved(false);
   }
 
   async function save() {
     setBusy(true);
     setErrors([]);
     setSaved(false);
-    const text = kgText.trim().replace(/[,，]/g, '');
-    const r = await props.onSave({ kg: text === '' ? Number.NaN : Number(text), date });
+    const text = shown.kg.trim().replace(/[,，]/g, '');
+    const r = await props.onSave({ kg: text === '' ? Number.NaN : Number(text), date: shown.date });
     setBusy(false);
     if (r.ok) {
-      sync(r.purchase);
+      // 自分の読み直しで、最新は保存した値になっている
+      setDraft(null);
       setSaved(true);
     } else if (r.kind === 'invalid') setErrors(r.errors.map((e) => e.message));
     else setErrors(['保存できませんでした。もう一度お試しください']);
@@ -99,7 +86,7 @@ export function PurchaseSection(props: {
     setSaved(false);
     const r = await props.onClear();
     setBusy(false);
-    if (r.ok) sync(null);
+    if (r.ok) setDraft(null);
     else setErrors(['消せませんでした。もう一度お試しください']);
   }
 
@@ -118,11 +105,8 @@ export function PurchaseSection(props: {
             inputMode="decimal"
             placeholder="240"
             disabled={busy}
-            value={kgText}
-            onChange={(ev) => {
-              setKgText(ev.target.value);
-              setSaved(false);
-            }}
+            value={shown.kg}
+            onChange={(ev) => edit('kg', ev.target.value)}
           />
           <span style={{ fontWeight: 700 }}>kg</span>
         </span>
@@ -133,13 +117,10 @@ export function PurchaseSection(props: {
           id="purchase-date"
           type="date"
           className="date-input mincho"
-          value={date}
+          value={shown.date}
           disabled={busy}
           max={props.today}
-          onChange={(ev) => {
-            setDate(ev.target.value);
-            setSaved(false);
-          }}
+          onChange={(ev) => edit('date', ev.target.value)}
         />
       </div>
       {errors.length > 0 && (
@@ -149,10 +130,10 @@ export function PurchaseSection(props: {
           ))}
         </ul>
       )}
-      {changedElsewhere && dirty && (
+      {changedElsewhere && (
         <p className="errors" role="status">
           ほかの画面で購入の記録が変わりました（今は {p ? `${kg(p.kg)}kg・${monthDay(p.date)}` : '記録なし'}）。保存すると、この入力で書き換えます。{' '}
-          <button type="button" className="textlink" style={{ fontSize: 14, minHeight: 32 }} onClick={() => sync(p)}>
+          <button type="button" className="textlink" style={{ fontSize: 14, minHeight: 32 }} disabled={busy} onClick={() => setDraft(null)}>
             今の記録に戻す
           </button>
         </p>
