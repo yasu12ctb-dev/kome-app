@@ -246,7 +246,7 @@ describe('購入の記録と残り（設計書 §10）', () => {
   });
 
   it('設定: 量が空や文字なら数でない値として渡し、検証のエラーを出す', async () => {
-    const onSave = vi.fn(async () => ({ ok: false as const, kind: 'invalid' as const, errors: [{ field: 'kg' as const, message: '購入した量は 0 より大きく 10,000 kg 以下で入れてください' }] }));
+    const onSave = vi.fn(async () => ({ ok: false as const, kind: 'invalid' as const, errors: [{ field: 'kg' as const, message: '今年の購入量は 0 より大きく 10,000 kg 以下で入れてください' }] }));
     await render(<PurchaseSection purchase={null} today="2026-10-04" onSave={onSave} onClear={async () => ({ ok: true, purchase: null })} />);
     typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, 'abc');
     await act(async () => button('保存').click());
@@ -418,6 +418,23 @@ describe('購入の記録と残り（設計書 §10）', () => {
     await act(async () => root!.render(<RemainingLine receipts={rs} purchase={{ kg: 20, date: '2026-09-01', updatedAt: 'x' }} />));
     expect(host.textContent).toBe('購入より 40kg 多く受け取り');
     await act(async () => root!.render(<RemainingLine receipts={rs} purchase={null} />));
-    expect(host.querySelector('a[href="#settings"]')!.textContent).toContain('購入した量を記録すると');
+    expect(host.querySelector('a[href="#settings"]')!.textContent).toContain('今年の購入量を記録すると');
+  });
+});
+
+describe('記録 0 件のホームで今年の購入量を入れる（テストプレイヤーの要望・v1.2.0）', () => {
+  it('初回の記録の前でも、ホームで今年の購入量を保存すると残りが出て、設定へのリンクもある', async () => {
+    const coordinator = createReloadCoordinator({ win: window, reload: vi.fn() });
+    window.location.hash = '';
+    await render(<App coordinator={coordinator} />);
+    await until(() => host.textContent?.includes('最初の一袋') ?? false);
+    expect(host.querySelector('nav a[href="#settings"]')!.textContent).toBe('設定');
+    expect(host.textContent).toContain('今年の購入量');
+    typeInto(host.querySelector<HTMLInputElement>('#purchase-kg')!, '240');
+    const save = [...host.querySelectorAll('button')].find((b) => b.textContent === '保存')!;
+    await act(async () => save.click());
+    await until(() => host.querySelector('.remain')?.textContent === '残り 240kg');
+    expect(host.querySelector('[data-dirty="true"]')).toBeNull();
+    expect(host.textContent).toContain('最初の一袋');
   });
 });

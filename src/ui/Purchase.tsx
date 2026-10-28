@@ -12,7 +12,7 @@ export function RemainingLine(props: { receipts: readonly Receipt[]; purchase: P
   if (purchase === null) {
     return (
       <a href="#settings" className="remain-hint">
-        購入した量を記録すると、残りが出ます
+        今年の購入量を記録すると、残りが出ます
       </a>
     );
   }
@@ -32,12 +32,14 @@ export function RemainingLine(props: { receipts: readonly Receipt[]; purchase: P
   );
 }
 
-/** 設定画面の「購入した量」 */
+/** 「今年の購入量」の欄（設定画面と、記録 0 件のホーム） */
 export function PurchaseSection(props: {
   purchase: Purchase | null;
   today: Ymd;
   onSave: (input: { kg: number; date: string }) => Promise<PurchaseResult>;
   onClear: () => Promise<PurchaseResult>;
+  /** 記録 0 件のホームでは説明を短くする */
+  compact?: boolean;
 }) {
   const p = props.purchase;
   // 状態は設計書 §10「設定の購入欄の状態」: 比べる相手は常に今の記録（latest）。持つのは下書きと待機だけ
@@ -92,9 +94,11 @@ export function PurchaseSection(props: {
 
   return (
     <section data-dirty={dirty ? 'true' : 'false'}>
-      <h2 className="section-h">購入した量</h2>
+      <h2 className="section-h">今年の購入量</h2>
       <p className="sub" style={{ fontSize: 13, margin: '4px 0 0', lineHeight: 1.6 }}>
-        ホームに、まだ受け取っていない量（購入した量 − 購入日から受け取った量）が出ます。新しく購入したら書き換えてください。この端末の中だけに保存します（バックアップには入りません）。
+        {props.compact
+          ? '入れておくと、受け取るたびに「残り」が出ます。あとから設定でも直せます。'
+          : 'ホームに、まだ受け取っていない量（今年の購入量 − 購入日から受け取った量）が出ます。新しく購入したら書き換えてください。この端末の中だけに保存します（バックアップには入りません）。'}
       </p>
       <div className="row">
         <label htmlFor="purchase-kg">量</label>

@@ -45,9 +45,9 @@ export function validatePurchase(input: { kg: unknown; date: unknown }, today: Y
   const errors: ValidationError[] = [];
   const { kg, date } = input;
   if (typeof kg !== 'number' || !Number.isFinite(kg) || kg <= 0 || kg > MAX_PURCHASE_KG) {
-    errors.push({ field: 'kg', message: `購入した量は 0 より大きく ${MAX_PURCHASE_KG.toLocaleString('ja-JP')} kg 以下で入れてください` });
+    errors.push({ field: 'kg', message: `今年の購入量は 0 より大きく ${MAX_PURCHASE_KG.toLocaleString('ja-JP')} kg 以下で入れてください` });
   } else if (!isPositiveTenth(kg)) {
-    errors.push({ field: 'kg', message: '購入した量は 0.1 kg 刻みで入れてください' });
+    errors.push({ field: 'kg', message: '今年の購入量は 0.1 kg 刻みで入れてください' });
   }
   if (!isValidYmd(date)) {
     errors.push({ field: 'date', message: '購入日が正しくありません' });

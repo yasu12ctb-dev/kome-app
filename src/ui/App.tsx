@@ -102,7 +102,7 @@ export function App(props: { coordinator?: ReloadCoordinator } = {}) {
       />
     );
   } else {
-    screen = <Home receipts={receipts} purchase={state.purchase} lineage={lineage} dataRevision={meta.dataRevision} today={today} standalone={isStandalone()} onConflict={() => setConflict(true)} />;
+    screen = <Home receipts={receipts} purchase={state.purchase} onSavePurchase={actions.setPurchase} onClearPurchase={actions.clearPurchase} lineage={lineage} dataRevision={meta.dataRevision} today={today} standalone={isStandalone()} onConflict={() => setConflict(true)} />;
   }
 
   return (

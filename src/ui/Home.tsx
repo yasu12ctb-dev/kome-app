@@ -7,7 +7,8 @@ import { kg, monthDay, monthDayWeek, yen } from './format';
 import { fitFontSize } from './fit';
 import { Bag, BagOutline } from './icons';
 import { unpaidText } from './timeline';
-import { RemainingLine } from './Purchase';
+import { PurchaseSection, RemainingLine } from './Purchase';
+import type { PurchaseResult } from '../data/repo';
 
 const STATUS_TEXT = { unset: 'バックアップ未設定', saved: '保存済み', pending: '保存待ち', error: '保存が止まっています' } as const;
 
@@ -50,7 +51,13 @@ function useThemeColorFrom(ref: RefObject<HTMLElement | null>, key: string) {
   }, [ref, key]);
 }
 
-export function Home(props: { receipts: Receipt[]; purchase: Purchase | null; lineage: Lineage; dataRevision: number; today: Ymd; standalone: boolean; onConflict: () => void }) {
+export function Home(props: {
+  receipts: Receipt[];
+  purchase: Purchase | null;
+  /** 記録 0 件のホームで今年の購入量を入れる（設計書 §10） */
+  onSavePurchase: (input: { kg: number; date: string }) => Promise<PurchaseResult>;
+  onClearPurchase: () => Promise<PurchaseResult>;
+  lineage: Lineage; dataRevision: number; today: Ymd; standalone: boolean; onConflict: () => void }) {
   const { receipts, lineage, today } = props;
   const mainRef = useRef<HTMLElement | null>(null);
   const themeKey = receipts.length === 0 ? 'empty' : stateClass(predictNext(receipts, today));
@@ -108,10 +115,16 @@ export function Home(props: { receipts: Receipt[]; purchase: Purchase | null; li
             <RemainingLine receipts={receipts} purchase={props.purchase} />
           </div>
         )}
+        <div style={{ marginTop: 16 }}>
+          <PurchaseSection purchase={props.purchase} today={today} onSave={props.onSavePurchase} onClear={props.onClearPurchase} compact />
+        </div>
         <a href="#settings" className="textlink" style={{ fontSize: 15 }}>
           機種変更した方は、バックアップから復元
         </a>
         <div className="home-foot">
+          <nav className="links" aria-label="メイン">
+            <a href="#settings">設定</a>
+          </nav>
           <a href="#add" className="primary">
             <BagOutline />
             お米を受け取った
